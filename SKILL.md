@@ -56,6 +56,21 @@ Fill `templates/QA-WATCH-REPORT.md`. Rules:
 - If the tape contradicts a green test suite, **the tape wins** — file the bug, quote the
   timestamp, and say plainly that the tests missed it.
 
+## Phase 4 — leave no trace
+
+The loop spawns real browser processes; the loop is not DONE until the machine is clean.
+After `record stop` + `agent-browser close --all`, run:
+
+```bash
+node scripts/sweep-check.mjs   # exit 0 = clean, exit 1 = lingering browser instances listed
+```
+
+Agents orphan processes more often than humans do — a crashed drive step or an impatient exit
+leaves headless browsers (or worse, full-disk scans) running with no consumer. Strict rule:
+**every completed loop ends with a sweep, and a kill is only claimed after re-querying that it
+landed.** If your agent runtime spawns other helpers (search tools, servers), sweep those too —
+scoped to what THIS loop started; report-first, kill deliberately.
+
 ## Known limits (state them in every report)
 
 - Desktop-width recording overstates zoom-out vs mobile; mobile framing needs its own loop.

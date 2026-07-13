@@ -58,11 +58,13 @@ node scripts/record-loop.mjs --url http://localhost:3000 --out ./qa-run.webm --m
 3. **Watch cheap, then zoom.** Metadata first, then a sampled pass (20–30 evenly spaced frames), then high-resolution detail frames only at the moments that matter. Don't extract 200 full-res frames of a loading spinner.
 4. **Verdict with timestamps.** Every PASS/FAIL cites the frame time. Every unjudgeable item is declared unjudgeable (crop, resolution, not-exercised) — a permit-null verdict beats a fake pass.
 5. **A green suite + a dead screen = the tape wins.** File the bug with the timestamp.
+6. **Leave no trace.** The loop spawns real processes; it isn't done until they're gone — `node scripts/sweep-check.mjs` after every loop.
 
 ## Repo layout
 
 ```
 scripts/record-loop.mjs     # the recording arm (browser hygiene built in)
+scripts/sweep-check.mjs     # leave-no-trace postflight (lingering browser check)
 SKILL.md                    # the watch + verdict discipline (agent-facing)
 templates/QA-WATCH-REPORT.md# the verdict scorecard template
 ```
