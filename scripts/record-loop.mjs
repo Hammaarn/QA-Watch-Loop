@@ -49,7 +49,8 @@ const session = opt("session");
 
 const ab = (...a) => {
   const argv = session ? ["--session", session, ...a] : a;
-  return execFileSync("agent-browser", argv, { encoding: "utf-8", timeout: 120_000 });
+  // windowsHide: npm .cmd shims spawn a visible console per call on Windows otherwise
+  return execFileSync("agent-browser", argv, { encoding: "utf-8", timeout: 120_000, windowsHide: true });
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

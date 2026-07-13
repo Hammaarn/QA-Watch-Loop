@@ -26,8 +26,11 @@ Use `scripts/record-loop.mjs`, or drive agent-browser yourself:
    bottom edge — cropped zones become unjudgeable items).
 3. `agent-browser record start <path.webm>` (no URL — it records the current page; passing a URL
    here creates a fresh context and can drop your viewport).
-4. Drive the flow under test (`snapshot` → refs → `click`/`fill`). For long async phases, poll a
-   completion marker in a loop — do not guess durations.
+4. Drive the flow under test (`snapshot` → refs → `click`/`fill`) — **AFTER `record start`, and
+   re-do any page state from scratch**: `record start` spawns a fresh context that reloads the
+   page, silently wiping form fills and client state you set beforehand. A pre-filled form +
+   post-start click on a now-disabled button = a 0.4-second recording of a static page (learned
+   the hard way). For long async phases, poll a completion marker — do not guess durations.
 5. `agent-browser record stop` then ALWAYS `agent-browser close --all` (also on failure — wrap in
    a finally/trap). One browser instance per loop; never leave zombies.
 
