@@ -1,0 +1,74 @@
+{
+  "name": "jm-chambers",
+  "description": "Pairs with flows/jm-chambers.json. Tests a REFUSAL, which inverts the usual logic: here the interstitial APPEARING is the pass, and a run that sailed through to a Full Trial would mean the gate is not holding. Everything downstream depends on that one moment, so it is the guard.",
+  "items": [
+    {
+      "id": "trial-requested",
+      "claim": "A Full Trial was actually requested (not a Quick Ruling by accident)",
+      "falsifiedBy": "no `full trial requested` chapter — the form submitted something else and the gate was never asked the question",
+      "check": { "type": "chapter", "match": "full trial requested" }
+    },
+    {
+      "id": "chambers-offered",
+      "claim": "GUARD — the bench refused and offered chambers instead",
+      "falsifiedBy": "no `chambers offered` chapter. Either the gate let a second Full Trial through (the ledger is not holding) or the refusal arrived too slowly to have preceded the spend, which is the entire point of the downgrade",
+      "check": { "type": "chapter", "match": "chambers offered", "withinS": 90 }
+    },
+    {
+      "id": "not-silent",
+      "claim": "The downgrade was OFFERED, not applied silently — the user had to accept it",
+      "falsifiedBy": "no `chambers accepted` chapter, i.e. a ruling appeared without anyone choosing it. A submit that quietly ran something smaller than what was asked for is a worse betrayal than the paywall it replaced",
+      "check": { "type": "chapter", "match": "chambers accepted" },
+      "dependsOn": ["chambers-offered"]
+    },
+    {
+      "id": "ruling-delivered",
+      "claim": "The chambers hearing actually produced a ruling",
+      "falsifiedBy": "no `chambers ruling landed` chapter — the consolation prize does not exist, which is worse than refusing outright",
+      "check": { "type": "chapter", "match": "chambers ruling landed" },
+      "dependsOn": ["chambers-offered"]
+    },
+    {
+      "id": "no-page-errors",
+      "claim": "No uncaught exceptions or unhandled rejections on the refusal path",
+      "falsifiedBy": "any page error — this path has never run before, so it is the likeliest place for one",
+      "check": { "type": "noPageError" }
+    },
+    {
+      "id": "no-console-errors",
+      "claim": "No console errors on the refusal path",
+      "falsifiedBy": "any console error. A 402 handled correctly should NOT surface as a console error; if it does, the client is treating a designed refusal as a fault",
+      "check": { "type": "noConsoleError" }
+    },
+    {
+      "id": "no-unexpected-failed-requests",
+      "claim": "No request failed except, possibly, the DESIGNED 402 on the trial route",
+      "falsifiedBy": "any 4xx/5xx that is not a 402. The 402 is the gate working; anything else on this path is the gate breaking. Whether a 402 appears at all depends on which layer caught it first — the client pre-flight refuses before the request is made, so its ABSENCE here is not evidence the server gate is missing",
+      "check": { "type": "noFailedRequest", "matching": "^(?!402\\b)" }
+    },
+    {
+      "id": "ruling-complete",
+      "claim": "The chambers ruling is COMPLETE — not the 3-finding truncation the old paywall gave",
+      "falsifiedBy": "a findings list capped at 3 with an unlock teaser. That would reproduce the exact failure the downgrade replaced, one tier down and invisibly",
+      "check": { "type": "manual" },
+      "watch": "full charge list in frame",
+      "dependsOn": ["ruling-delivered"]
+    },
+    {
+      "id": "paywall-exempt-stored",
+      "claim": "The stored record carries paywallExempt:true — the mechanism fired, not merely the appearance of completeness",
+      "falsifiedBy": "the field absent on the persisted review. Completeness could then be an accident of the daily counter rather than the exemption, and would break the day the counter moved",
+      "check": { "type": "manual" },
+      "judgeBy": "the stored review record",
+      "dependsOn": ["ruling-delivered"]
+    },
+    {
+      "id": "in-voice",
+      "claim": "The refusal stays in the cave — courtroom register, never 'quota exceeded' or 'upgrade to Pro'",
+      "falsifiedBy": "any SaaS-register copy on the interstitial. Product #6C: every seam the user meets is in-world or the theatre cracks",
+      "check": { "type": "manual" },
+      "watch": "chambers offered",
+      "dependsOn": ["chambers-offered"]
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "name": "jm-chambers",
+  "description": "JudgeMySite: ask for a Full Trial when today's is already spent, and take the chambers hearing that is offered instead. The third worked example, and the one that tests a REFUSAL — the flow asks for something it expects to be denied, and the denial is the feature. Requires the entitlement to be spent already (a prior Full Trial on the same identifier); against an un-spent ledger the interstitial correctly never appears and the run should FAIL rather than quietly proceed.",
+  "steps": [
+    {
+      "do": "fill",
+      "match": "EXHIBIT A",
+      "value": "https://neal.fun",
+      "chapter": "url entered"
+    },
+    {
+      "do": "click",
+      "match": "The Elitist",
+      "chapter": "judge picked"
+    },
+    {
+      "do": "click",
+      "match": "FULL TRIAL Recommended",
+      "chapter": "mode: full trial"
+    },
+    {
+      "comment": "Asking for the full trial is the point. The gate sits in FRONT of the spend, so this submit should be refused before any VM or synthesis is paid for.",
+      "do": "click",
+      "match": "SUBMIT FOR FULL TRIAL",
+      "chapter": "full trial requested"
+    },
+    {
+      "comment": "THE CLAIM. Matched on the button rather than the in-voice line: the message is server-resolved prose that may be reworded, while the action is the contract. Deliberately short — the whole promise of the downgrade is that the refusal arrives BEFORE the spend, so a slow one is itself a finding.",
+      "do": "waitFor",
+      "match": "Take it in chambers",
+      "timeoutS": 60,
+      "chapter": "chambers offered"
+    },
+    {
+      "comment": "Never downgrade silently — the user chooses. This click IS that choice.",
+      "do": "click",
+      "match": "Take it in chambers",
+      "chapter": "chambers accepted"
+    },
+    {
+      "do": "waitFor",
+      "match": "JUDGMENT OF THE COURT|CASE NO",
+      "timeoutS": 300,
+      "chapter": "chambers ruling landed"
+    },
+    { "do": "wait", "ms": 2000 },
+    {
+      "do": "scroll",
+      "dir": "down",
+      "px": 800,
+      "chapter": "charges in frame"
+    },
+    { "do": "wait", "ms": 2500 },
+    {
+      "do": "scroll",
+      "dir": "down",
+      "px": 900,
+      "chapter": "full charge list in frame"
+    },
+    { "do": "wait", "ms": 2500 }
+  ]
+}

@@ -95,6 +95,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let recording = false;
 let cleaned = false;
+
+/**
+ * Write the evidence sidecar and (if asked for) the checklist verdict.
+ *
+ * Called on BOTH the success and the failure path. A flow that dies mid-run is
+ * exactly when the evidence is most valuable — the console error or failed
+ * request that explains WHY it died is already collected, and the chapters say
+ * how far it got. The first version of this only wrote on success, so a failed
+ * run threw all of that away and left a bare "step N never matched" to
+ * reconstruct from server logs by hand. Silence about a failure is the one
+ * thing this loop must never produce.
+ */
+const writeArtifacts = ({ failed = false } = {}) => {
+  const report = evidence.report();
+  const evidencePath = `${resolve(out)}.evidence.json`;
+  writeFileSync(evidencePath, JSON.stringify(report, null, 2), "utf-8");
+  for (const line of formatEvidence(report)) console.log(line);
+  console.log(`[record-loop] evidence: ${evidencePath}`);
+
+  if (!checklist) return null;
+  const resolved = resolveChecklist(checklist, report);
+  for (const line of formatVerdict(resolved)) console.log(line);
+  const verdictPath = `${resolve(out)}.verdict.md`;
+  writeFileSync(verdictPath, formatVerdictMarkdown(resolved, { tape: out }), "utf-8");
+  console.log(`[record-loop] verdict: ${verdictPath}`);
+  if (failed) {
+    console.log(
+      "[record-loop] NOTE: the run FAILED before finishing, so items past the failure " +
+        "never ran. Read them as unreached, not as judged.",
+    );
+  }
+  return resolved;
+};
+
 const cleanup = (stopRecording) => {
   if (cleaned) return;
   cleaned = true;
@@ -183,20 +217,10 @@ try {
   evidence.collect(); // final drain — late errors still belong to this tape
   cleanup(false);
 
-  const report = evidence.report();
-  const evidencePath = `${resolve(out)}.evidence.json`;
-  writeFileSync(evidencePath, JSON.stringify(report, null, 2), "utf-8");
-
   console.log(`[record-loop] saved: ${out}`);
-  for (const line of formatEvidence(report)) console.log(line);
-  console.log(`[record-loop] evidence: ${evidencePath}`);
+  const resolved = writeArtifacts();
 
-  if (checklist) {
-    const resolved = resolveChecklist(checklist, report);
-    for (const line of formatVerdict(resolved)) console.log(line);
-    const verdictPath = `${resolve(out)}.verdict.md`;
-    writeFileSync(verdictPath, formatVerdictMarkdown(resolved, { tape: out }), "utf-8");
-    console.log(`[record-loop] verdict: ${verdictPath}`);
+  if (resolved) {
     console.log("[record-loop] next: judge the UNJUDGEABLE items — the verdict says where to look.");
     // A machine-checkable claim came back false. Everything else stays exit 0,
     // including UNJUDGEABLE: the loop gates FUNCTION, a human gates TASTE.
@@ -206,6 +230,16 @@ try {
   }
 } catch (e) {
   console.error(`[record-loop] FAILED: ${e?.message ?? e}`);
-  cleanup(true);
+  // Stop the recording and drain the buffers BEFORE closing the browser —
+  // once the daemon is gone there is nothing left to ask. The tape already
+  // survived this path (cleanup stops the recorder); the evidence did not.
+  try {
+    if (recording) { ab("record", "stop"); recording = false; evidence.mark("record-stop", "after failure"); }
+  } catch { /* best-effort */ }
+  try { evidence.collect(); } catch { /* the browser may already be gone */ }
+  cleanup(false);
+  try { writeArtifacts({ failed: true }); } catch (e2) {
+    console.error(`[record-loop] could not write evidence after failure: ${e2?.message ?? e2}`);
+  }
   process.exit(2);
 }
