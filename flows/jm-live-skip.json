@@ -1,0 +1,63 @@
+{
+  "name": "jm-live-skip",
+  "description": "JudgeMySite: run a live Full Trial and INTERRUPT it — take the mid-show 'read the verdict now' exit the moment the ruling lands. The second worked example, and the one that shows the shape jm-full-trial.json cannot: a flow whose whole point is to interrupt the thing it started, because the code under test only runs on the abort path.",
+  "steps": [
+    {
+      "do": "fill",
+      "match": "EXHIBIT A",
+      "value": "https://sindresorhus.com",
+      "chapter": "url entered"
+    },
+    {
+      "do": "click",
+      "match": "The Elitist",
+      "chapter": "judge picked"
+    },
+    {
+      "do": "click",
+      "match": "FULL TRIAL Recommended",
+      "chapter": "mode: full trial"
+    },
+    {
+      "comment": "The submit button is ABSENT from the a11y tree until the URL field is non-empty — it renders disabled. Hence it is matched here, after the fill, not before.",
+      "do": "click",
+      "match": "SUBMIT FOR FULL TRIAL",
+      "chapter": "submitted"
+    },
+    {
+      "comment": "Wait for the SKIP BANNER, not the verdict page. The server emits its verdict event the instant synthesis returns — before the visual drain — and that gap is the only window in which the skip exists. Budget is generous because a deployment with a changed runner bundle re-bakes its golden snapshot first (60-270s) on top of the trial itself.",
+      "do": "waitFor",
+      "match": "The ruling is in|bench has reached its verdict",
+      "timeoutS": 900,
+      "chapter": "skip window open"
+    },
+    {
+      "comment": "THE STEP UNDER TEST. This click aborts the client stream mid-show, which is what kills the Lambda and is exactly why the teardown had to be moved into after(). A hard failure here is correct: if the button cannot be resolved, no abort happened, and any later 'teardown works' reading would be about a run that never skipped.",
+      "do": "click",
+      "match": "Read the verdict now",
+      "chapter": "SKIPPED — client aborted"
+    },
+    { "do": "wait", "ms": 3000 },
+    {
+      "do": "waitFor",
+      "match": "CASE NO",
+      "timeoutS": 60,
+      "chapter": "verdict page rendered"
+    },
+    {
+      "comment": "Bring the verdict surfaces into frame so the tape carries them: FIRST ORDER band, then the charges with their receipts.",
+      "do": "scroll",
+      "dir": "down",
+      "px": 700,
+      "chapter": "first order in frame"
+    },
+    { "do": "wait", "ms": 2500 },
+    {
+      "do": "scroll",
+      "dir": "down",
+      "px": 900,
+      "chapter": "charges + receipts in frame"
+    },
+    { "do": "wait", "ms": 2500 }
+  ]
+}
