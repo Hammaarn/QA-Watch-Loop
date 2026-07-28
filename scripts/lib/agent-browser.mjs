@@ -77,6 +77,12 @@ export function makeAgentBrowser({ session, timeoutMs = 120_000 } = {}) {
       timeout: timeoutMs,
       windowsHide: true,
       env,
+      // MEASURED: `network requests` against a page that streams base64 frames
+      // returned 192 MB. execFileSync's default maxBuffer is 1 MB, so Node killed
+      // the child mid-write, agent-browser panicked on the closed pipe, and the
+      // read came back empty — reported as "clean". A generous ceiling, and the
+      // collector treats hitting it as a FAILURE rather than as no findings.
+      maxBuffer: 64 * 1024 * 1024,
       stdio: capture ? ["ignore", "pipe", "inherit"] : ["ignore", "ignore", "inherit"],
       ...(AB.shell ? { shell: true } : {}),
     });
@@ -86,6 +92,29 @@ export function makeAgentBrowser({ session, timeoutMs = 120_000 } = {}) {
     ab: (...a) => run(a, false),
     /** Capture stdout — query-only commands. Never use for `open`. */
     abOut: (...a) => run(a, true),
+    /**
+     * Fully detached: not even stderr is inherited.
+     *
+     * For commands that leave a LONG-LIVED child behind — in practice
+     * `record start`. Such a child inherits our stderr and keeps holding it
+     * after we exit, so if our own output is piped anywhere (`| grep`, `| tee`,
+     * a captured tool call) that pipe never sees EOF and the CALLER appears to
+     * hang forever, even though this process exited 0 seconds ago. Measured:
+     * `--manual | grep` looked like an infinite hang; the same command
+     * redirected to a file returned in 5s.
+     *
+     * The cost is losing agent-browser's stderr text for this one call; the exit
+     * status still propagates, so a genuine failure still throws.
+     */
+    abDetached: (...a) =>
+      execFileSync(AB.bin, a.map(quote), {
+        encoding: "utf-8",
+        timeout: timeoutMs,
+        windowsHide: true,
+        env,
+        stdio: ["ignore", "ignore", "ignore"],
+        ...(AB.shell ? { shell: true } : {}),
+      }),
   };
 }
 
@@ -119,6 +148,8 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
   const consoleLines = [];
   const pageErrors = [];
   const requests = [];
+  /** Channels that could not be read. Distinct from "read, found nothing". */
+  const failures = [];
 
   /** Timestamped jump-point. Chapters are what make a 5-minute tape navigable. */
   const mark = (event, detail) => {
@@ -139,8 +170,12 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
     let raw = "";
     try {
       raw = String(abOut(...cmd));
-    } catch {
-      return []; // transient — never let evidence gathering break a recording
+    } catch (e) {
+      // NEVER swallow this. An unread channel is not an empty channel, and
+      // reporting "0 errors (clean)" when collection actually failed is worse
+      // than reporting nothing at all — it is a confident lie about the run.
+      failures.push({ channel: cmd.join(" "), reason: e?.code ?? String(e?.message ?? e).slice(0, 120) });
+      return [];
     }
     try {
       (ab ?? abOut)(...cmd, "--clear");
@@ -225,7 +260,13 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
       mark("page-error", message.slice(0, 140));
     }
 
-    for (const line of readAndClear(["network", "requests"])) {
+    // FILTER TO REAL NETWORK TRAFFIC. Measured against JudgeMySite, whose live
+    // show streams base64 screencast frames: the unfiltered log was 192 MB and
+    // blew every buffer. Filtered to http it is 137 lines / 174 KB and instant.
+    // `data:` and `blob:` URIs are inline payloads, not network activity, so
+    // excluding them loses no signal — and the filter is server-side, so the
+    // enormous string is never serialised in the first place.
+    for (const line of readAndClear(["network", "requests", "--filter", "http"])) {
       const m = line.match(REQUEST_RE);
       if (!m) continue;
       const [, method, url, type, statusRaw] = m;
@@ -234,9 +275,12 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
       // why it does NOT earn a chapter — crying "failed" at an in-flight request
       // would make the loop noisy, and a noisy instrument gets ignored.
       const status = statusRaw === undefined ? null : Number(statusRaw);
-      requests.push({ t, method, url, type, status });
+      // A data: URI can be tens of KB; storing it whole makes the evidence file
+      // unreadable and tells you nothing you could not get from the prefix.
+      const shortUrl = url.length > 200 ? `${url.slice(0, 200)}…[${url.length} chars]` : url;
+      requests.push({ t, method, url: shortUrl, type, status });
       if (status !== null && (status === 0 || status >= 400)) {
-        mark("request-failed", `${status} ${method} ${url.slice(0, 110)}`);
+        mark("request-failed", `${status} ${method} ${shortUrl.slice(0, 110)}`);
       }
     }
   };
@@ -253,6 +297,7 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
     incompleteRequests: requests.filter(isIncomplete).length,
     totalRequests: requests.length,
     chapters: chapters.length,
+    collectionFailures: failures.length,
   });
 
   const report = () => ({
@@ -260,6 +305,7 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
     durationSeconds: elapsed(),
     summary: summary(),
     chapters,
+    collectionFailures: failures,
     console: consoleLines,
     pageErrors,
     // Only the failures are kept: a full request log is mostly noise, and the
@@ -276,7 +322,18 @@ export function formatEvidence(report) {
   const s = report.summary;
   const out = [];
   const clean =
-    s.consoleErrors === 0 && s.pageErrors === 0 && s.failedRequests === 0;
+    s.consoleErrors === 0 && s.pageErrors === 0 && s.failedRequests === 0 &&
+    s.collectionFailures === 0;
+
+  if (s.collectionFailures > 0) {
+    out.push(
+      `[record-loop] ⚠ EVIDENCE INCOMPLETE — ${s.collectionFailures} channel(s) could not be read; ` +
+        "the numbers below are a FLOOR, not a clean bill of health",
+    );
+    for (const f of report.collectionFailures ?? []) {
+      out.push(`[record-loop]   channel "${f.channel}" failed: ${f.reason}`);
+    }
+  }
 
   out.push(
     `[record-loop] EVIDENCE — ${s.consoleErrors} console error(s), ` +

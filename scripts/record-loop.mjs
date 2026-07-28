@@ -53,7 +53,7 @@ const untilRe = opt("until") ? new RegExp(opt("until"), "i") : null;
 const timeoutS = Number(opt("timeout", "600"));
 const session = opt("session");
 
-const { ab, abOut } = makeAgentBrowser({ session });
+const { ab, abOut, abDetached } = makeAgentBrowser({ session });
 // Evidence reads get their own SHORT timeout. They are all fast queries against
 // an already-running daemon, so anything slow means something is wrong — and a
 // sample that blocked for the full 120s would stall the recording it is meant to
@@ -93,7 +93,9 @@ try {
 
   // 3. record the CURRENT page (no URL arg — a URL here spawns a fresh context
   //    and can drop the viewport we just set).
-  ab("record", "start", resolve(out));
+  // abDetached: the recorder outlives us and would otherwise hold our stderr,
+  // wedging any pipe our own output is written to. See abDetached()'s note.
+  abDetached("record", "start", resolve(out));
   recording = true;
   evidence.mark("record-start", `${vw}x${vh}`);
   // AFTER record start: starting a recording reloads the page, which would wipe
