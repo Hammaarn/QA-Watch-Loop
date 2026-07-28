@@ -36,6 +36,29 @@ Use `scripts/record-loop.mjs`, or drive agent-browser yourself:
 
 ## Phase 2 — watch (cheap → targeted)
 
+0. **Read the evidence sidecar FIRST — it is free.** `record-loop` writes
+   `<tape>.evidence.json` beside the video and prints a summary when it finishes.
+   It carries console errors, page errors (uncaught exceptions + unhandled
+   rejections), failed requests, and **chapters** — timestamped jump-points.
+
+   Why before the frames: a model watching pixels is blind to this entire class.
+   A console error is invisible on video, a 404 for a background asset is
+   invisible, and a feature that silently emits nothing looks identical to one
+   that works. The sidecar costs no tokens and answers "did anything break?"
+   before you spend anything answering "how did it look?".
+
+   Use the chapters to aim Phase 2's targeted pass — `+168s until-matched` tells
+   you exactly where the thing you were waiting for arrived, instead of guessing
+   at a five-minute tape.
+
+   **Evidence is reported, never enforced.** A console error is a fact to weigh,
+   not an automatic FAIL — plenty of pages log errors that do not matter. You
+   decide; the sidecar only makes sure you decide knowing.
+
+   For `--manual` runs, nothing is sampling while you drive, so run
+   `node scripts/collect-evidence.mjs --out <tape>` BEFORE `close --all`. That is
+   a post-hoc drain: it tells you WHAT happened, not WHEN.
+
 1. `video_info` — duration/resolution first. If a checklist zone is outside the recorded frame,
    mark those items UNJUDGEABLE now, don't pretend later.
 2. Sampled pass: `video_watch` with `view_sample` 20–30 frames (evenly spaced) — build the
