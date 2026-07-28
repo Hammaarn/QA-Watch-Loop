@@ -1,0 +1,74 @@
+{
+  "name": "jm-live-skip",
+  "description": "The worked example, transcribed from a real run. Pairs with flows/jm-live-skip.json: the flow drives, this judges. Note the division it makes — the machine proves the run REACHED each moment and that nothing broke on the way, and every claim about what a human would then SEE (or read in a server log) is handed over as UNJUDGEABLE with the timestamp to aim at. That division is the point: the loop can tell you the thing was exercised, which is the half that used to be assumed.",
+  "items": [
+    {
+      "id": "flow-submitted",
+      "claim": "The trial was actually submitted",
+      "falsifiedBy": "no `submitted` chapter — the form never went through, so nothing downstream means anything",
+      "check": { "type": "chapter", "match": "submitted" }
+    },
+    {
+      "id": "skip-fired",
+      "claim": "GUARD — the mid-show skip window opened and the client aborted",
+      "falsifiedBy": "no `SKIPPED` chapter. The run played to the end instead, so the abort path was never taken and every teardown claim below is untested rather than false",
+      "check": { "type": "chapter", "match": "SKIPPED" }
+    },
+    {
+      "id": "verdict-rendered",
+      "claim": "GUARD — the verdict page rendered after the skip",
+      "falsifiedBy": "no `verdict page rendered` chapter — the skip lost the ruling instead of revealing it, which would be a worse bug than the one under test",
+      "check": { "type": "chapter", "match": "verdict page rendered" }
+    },
+    {
+      "id": "no-page-errors",
+      "claim": "No uncaught exceptions or unhandled rejections during the run",
+      "falsifiedBy": "any page error. Note this is the channel agent-browser's own `errors` cannot see — it comes from the injected hook",
+      "check": { "type": "noPageError" }
+    },
+    {
+      "id": "no-console-errors",
+      "claim": "No console errors during the run",
+      "falsifiedBy": "any console error. Weigh it, do not reflex-fail: plenty of pages log errors that do not matter",
+      "check": { "type": "noConsoleError" }
+    },
+    {
+      "id": "no-failed-requests",
+      "claim": "No request failed",
+      "falsifiedBy": "any 4xx/5xx or status-0 request. Incomplete requests are reported separately and are NOT failures — a request still in flight at the last sample is normal",
+      "check": { "type": "noFailedRequest" }
+    },
+    {
+      "id": "teardown-holds",
+      "claim": "after() held the invocation open through the abort, and the VM came down",
+      "falsifiedBy": "no `sandbox.live_teardown` line in the run's logs (after() did not hold), or the line present with stopped:false (it held but the VM survived)",
+      "check": { "type": "manual" },
+      "judgeBy": "the deployment's runtime logs",
+      "dependsOn": ["skip-fired"]
+    },
+    {
+      "id": "egress-measured",
+      "claim": "The gatekeeper's egress meter reached the host",
+      "falsifiedBy": "cost.compute carrying egress_measured:false — the meter never reported and the totals remain a floor",
+      "check": { "type": "manual" },
+      "judgeBy": "the deployment's runtime logs",
+      "dependsOn": ["skip-fired"]
+    },
+    {
+      "id": "receipts-render",
+      "claim": "Each charge carries its ENTERED IN EVIDENCE receipt naming the real element",
+      "falsifiedBy": "charges rendering with no receipt line beneath them",
+      "check": { "type": "manual" },
+      "watch": "charges \\+ receipts in frame",
+      "dependsOn": ["verdict-rendered"]
+    },
+    {
+      "id": "case-number-real",
+      "claim": "The verdict carries a real docket number, not the JM-LIVE-PREVIEW placeholder",
+      "falsifiedBy": "the placeholder on screen — persistence did not fire, so there is no permalink and no record",
+      "check": { "type": "manual" },
+      "watch": "verdict page rendered",
+      "dependsOn": ["verdict-rendered"]
+    }
+  ]
+}

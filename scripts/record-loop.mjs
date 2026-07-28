@@ -23,6 +23,8 @@
  *   --flow <file.json>   drive a scripted flow (fill/click/waitFor/scroll), then
  *                        stop. Unattended, and every step becomes a chapter —
  *                        this is what --manual cannot do. See flows/.
+ *   --checklist <file>   resolve a Phase 0 checklist against this run's evidence
+ *                        and print the verdict table. See checklists/.
  *   --session <name>     agent-browser session name (optional)
  *
  * Alongside the .webm it writes <out>.evidence.json — console errors, page
@@ -31,12 +33,15 @@
  * every 5s in both drive modes. Reported, never enforced: the verdict stays a
  * human judgement. For --manual runs use scripts/collect-evidence.mjs instead.
  *
- * Exit codes: 0 recorded ok · 1 bad args · 2 browser/recording failure.
+ * Exit codes: 0 recorded ok · 1 bad args, or a checklist FAIL · 2 browser/
+ * recording failure. A checklist UNJUDGEABLE never sets a non-zero exit — see
+ * check-checklist.mjs for why.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createCollector, formatEvidence, makeAgentBrowser } from "./lib/agent-browser.mjs";
 import { loadFlow, runFlow } from "./lib/flow.mjs";
+import { formatVerdict, formatVerdictMarkdown, loadChecklist, resolveChecklist } from "./lib/checklist.mjs";
 import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -58,6 +63,21 @@ const untilRe = opt("until") ? new RegExp(opt("until"), "i") : null;
 const timeoutS = Number(opt("timeout", "600"));
 const session = opt("session");
 const flowPath = opt("flow");
+const checklistPath = opt("checklist");
+
+// Load the checklist BEFORE touching the browser. It is validated at load (every
+// item needs a falsifier, guards must precede dependents), and finding that out
+// after a four-minute recording — when the evidence is already collected and the
+// only thing missing is the file that judges it — is a needless second run.
+let checklist = null;
+if (checklistPath) {
+  try {
+    checklist = loadChecklist(readFileSync(checklistPath, "utf-8"));
+  } catch (e) {
+    console.error(`[record-loop] bad checklist: ${e?.message ?? e}`);
+    process.exit(1);
+  }
+}
 
 const { ab, abOut, abDetached } = makeAgentBrowser({ session });
 // Evidence reads get their own SHORT timeout. They are all fast queries against
@@ -170,7 +190,20 @@ try {
   console.log(`[record-loop] saved: ${out}`);
   for (const line of formatEvidence(report)) console.log(line);
   console.log(`[record-loop] evidence: ${evidencePath}`);
-  console.log("[record-loop] next: watch it (SKILL.md phase 2) — video_info -> sampled watch -> detail frames.");
+
+  if (checklist) {
+    const resolved = resolveChecklist(checklist, report);
+    for (const line of formatVerdict(resolved)) console.log(line);
+    const verdictPath = `${resolve(out)}.verdict.md`;
+    writeFileSync(verdictPath, formatVerdictMarkdown(resolved, { tape: out }), "utf-8");
+    console.log(`[record-loop] verdict: ${verdictPath}`);
+    console.log("[record-loop] next: judge the UNJUDGEABLE items — the verdict says where to look.");
+    // A machine-checkable claim came back false. Everything else stays exit 0,
+    // including UNJUDGEABLE: the loop gates FUNCTION, a human gates TASTE.
+    if (resolved.summary.fail > 0) process.exit(1);
+  } else {
+    console.log("[record-loop] next: watch it (SKILL.md phase 2) — video_info -> sampled watch -> detail frames.");
+  }
 } catch (e) {
   console.error(`[record-loop] FAILED: ${e?.message ?? e}`);
   cleanup(true);

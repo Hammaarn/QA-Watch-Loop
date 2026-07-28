@@ -9,11 +9,34 @@ You are about to verify a change by **watching it**, not by trusting tests. The 
 falsification instrument: every claim in your verdict must carry a timestamp, and "unjudgeable"
 is a legitimate verdict.
 
-## Phase 0 — the checklist comes first
+## Phase 0 — the checklist comes first, and it is a FILE
 
-Write down WHAT this tape must prove or falsify before recording anything. One line per item:
-the feature/fix, what visible behavior confirms it, what visible behavior falsifies it.
+Write down WHAT this tape must prove or falsify before recording anything. One item per claim:
+what it asserts, and what would disprove it.
 No checklist → you will watch the tape and conclude "looks fine." That is the smell, not the proof.
+
+Write it as `checklists/<name>.json` and the loop resolves it for you (`--checklist`, or
+`check-checklist.mjs` against an existing tape). Prose works, but a file gets you three things
+prose cannot:
+
+- **`falsifiedBy` is mandatory** — an item without one is rejected at load. If you cannot say what
+  would disprove a claim, you have written a hope, not a checklist item.
+- **The machine decides what it actually can**, and says UNJUDGEABLE for everything else *with the
+  timestamp to look at*. It resolves `chapter` (did the run REACH this moment, and by when),
+  `noConsoleError` / `noPageError` / `noFailedRequest`. Anything visual, or living in a server log,
+  is `manual` — permanently unjudgeable here, and pointed at its channel via `judgeBy`.
+- **Guards cascade.** An item can `dependsOn` an earlier one. If the guard did not pass, the
+  dependent goes UNJUDGEABLE, never FAIL — a claim that was never exercised is untested, not false,
+  and recording it as a failure is exactly as wrong as recording it as a pass.
+
+Two invariants the resolver will not let you break:
+
+1. **It never invents a PASS.** A `manual` item cannot drift into PASS no matter how clean the run.
+2. **An unread channel is not an empty one.** If evidence collection failed, every absence-based
+   item is withheld as UNJUDGEABLE rather than passed. (This is the false-clean bug that once
+   reported an unreadable channel as a clean one, promoted into a rule.)
+
+`node scripts/check-checklist.mjs --selftest` proves all of that still holds.
 
 ## Phase 1 — record
 
@@ -70,7 +93,13 @@ Use `scripts/record-loop.mjs`, or drive agent-browser yourself:
 
 ## Phase 3 — verdict
 
-Fill `templates/QA-WATCH-REPORT.md`. Rules:
+If you ran with `--checklist`, the mechanical half is already done: `<tape>.verdict.md` holds the
+table, and the exit code is 1 only if a machine-checkable claim came back FALSE. **UNJUDGEABLE items
+are now your entire job** — the run is not verified until you judge them, and the verdict's
+**Judge by** column says where to look. Do not let a green exit code read as a verified run; it
+means nothing measurable broke, not that the feature works.
+
+Then fill `templates/QA-WATCH-REPORT.md`. Rules:
 
 - Every PASS/FAIL cites frame timestamps.
 - **PASS requires the positive evidence on screen** — absence of a failure is not a pass if the
@@ -104,3 +133,7 @@ scoped to what THIS loop started; report-first, kill deliberately.
   pair the tape with server logs when the failure could be non-visual.
 - Frame sampling can miss sub-second events; if a checklist item is a fast animation, use a
   high-fps `video_detail` segment on that moment specifically.
+- **The checklist resolver sees browser-side evidence only.** Server logs, database rows and
+  deploy-platform output are outside its reach, so claims that live there are `manual` with a
+  `judgeBy` pointer — never machine-decided. On a real run this was half the claims, and the
+  resolver's job was to prove the run had EXERCISED them, which is the half that used to be assumed.
