@@ -7,6 +7,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 
 /**
  * Resolve how to invoke agent-browser.
@@ -140,11 +141,26 @@ const REQUEST_RE = /^\[[^\]]*\]\s+([A-Z]+)\s+(\S+)\s+\(([^)]*)\)(?:\s+(\d+))?/;
 // findings invents page errors that never happened.
 const STATUS_GLYPH_RE = /^[✓✗]/;
 
-export function createCollector({ abOut, ab, now = () => Date.now() }) {
+export function createCollector({ abOut, ab, now = () => Date.now(), shots = null }) {
   const t0 = now();
   const elapsed = () => Math.round((now() - t0) / 1000);
 
   const chapters = [];
+  /**
+   * Accessibility snapshots, one per chapter, DEDUPED by content.
+   *
+   * The loop already pulled a snapshot on every flow step to resolve refs, and
+   * then threw it away — so content claims ("the verdict shows a real case
+   * number", "no 'quota exceeded' anywhere") had to be handed to a human even
+   * though they are string assertions over a tree we were holding. Keeping them
+   * turns roughly half the unjudgeable items into decided ones.
+   *
+   * Deduped because consecutive chapters are often the same screen, and an
+   * evidence file nobody can open is an evidence file nobody reads.
+   */
+  const snapshots = [];
+  const shotFiles = [];
+  let lastSnapshotText = null;
   const consoleLines = [];
   const pageErrors = [];
   const requests = [];
@@ -154,6 +170,35 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
   /** Timestamped jump-point. Chapters are what make a 5-minute tape navigable. */
   const mark = (event, detail) => {
     chapters.push({ t: elapsed(), event, ...(detail ? { detail } : {}) });
+  };
+
+  /**
+   * Capture the screen at a chapter: the a11y snapshot always, a PNG when the
+   * run is in screenshot mode.
+   *
+   * Read failures land in `failures` like any other channel, so an unreadable
+   * snapshot poisons snapshot-based checks instead of quietly reading as "that
+   * text was not on screen" — which is the false-clean bug wearing a new hat.
+   */
+  const captureScreen = (label) => {
+    const t = elapsed();
+    try {
+      const text = String(abOut("snapshot"));
+      if (text !== lastSnapshotText) {
+        snapshots.push({ t, label, text });
+        lastSnapshotText = text;
+      }
+    } catch (e) {
+      failures.push({ channel: "snapshot", reason: e?.code ?? String(e?.message ?? e).slice(0, 120) });
+    }
+    if (!shots) return;
+    const file = `${String(shotFiles.length).padStart(2, "0")}-${String(label ?? "frame").replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}.png`;
+    try {
+      ab("screenshot", join(shots, file));
+      shotFiles.push({ t, label, file });
+    } catch (e) {
+      failures.push({ channel: `screenshot ${file}`, reason: e?.code ?? String(e?.message ?? e).slice(0, 120) });
+    }
   };
 
   /**
@@ -305,6 +350,8 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
     durationSeconds: elapsed(),
     summary: summary(),
     chapters,
+    snapshots,
+    ...(shots ? { screenshots: shotFiles } : {}),
     collectionFailures: failures,
     console: consoleLines,
     pageErrors,
@@ -314,7 +361,7 @@ export function createCollector({ abOut, ab, now = () => Date.now() }) {
     incompleteRequests: requests.filter(isIncomplete),
   });
 
-  return { mark, collect, summary, report, elapsed, installErrorHook };
+  return { mark, collect, summary, report, elapsed, installErrorHook, captureScreen };
 }
 
 /** Human-facing lines for the console. The loop reports; it does not gate. */

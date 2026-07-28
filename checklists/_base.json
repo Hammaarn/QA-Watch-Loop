@@ -1,0 +1,30 @@
+{
+  "name": "base",
+  "description": "The criteria every run owes, regardless of what it is testing. A task checklist declares `\"extends\": \"_base\"` and then adds only what is task-specific. These were being re-typed into every checklist, which is how one of them quietly goes missing from the file where it mattered — and it made each checklist read as bespoke when most of it never is. Override any of these by reusing its id: the task always wins.",
+  "items": [
+    {
+      "id": "base-no-page-errors",
+      "claim": "No uncaught exceptions or unhandled rejections during the run",
+      "falsifiedBy": "any page error. This is the channel agent-browser's own `errors` cannot see — it comes from the injected hook, and it is the single highest-value signal the tape is blind to",
+      "check": { "type": "noPageError" }
+    },
+    {
+      "id": "base-no-console-errors",
+      "claim": "No console errors during the run",
+      "falsifiedBy": "any console error. Weigh it rather than reflex-failing: plenty of pages log errors that do not matter. The point is that you decide KNOWING",
+      "check": { "type": "noConsoleError" }
+    },
+    {
+      "id": "base-no-failed-requests",
+      "claim": "No request failed",
+      "falsifiedBy": "any 4xx/5xx or status-0 request. Incomplete requests are reported separately and are NOT failures — one still in flight at the last sample is normal. If your flow EXPECTS a failure status, override this id with a `matching` filter that excludes it",
+      "check": { "type": "noFailedRequest" }
+    },
+    {
+      "id": "base-run-completed",
+      "claim": "The run reached its end rather than dying partway",
+      "falsifiedBy": "no `record-stop` chapter — the flow threw, so every item after the failure point is unreached rather than judged",
+      "check": { "type": "chapter", "match": "record-stop" }
+    }
+  ]
+}

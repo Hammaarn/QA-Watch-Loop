@@ -1,7 +1,14 @@
 {
   "name": "jm-chambers",
-  "description": "Pairs with flows/jm-chambers.json. Tests a REFUSAL, which inverts the usual logic: here the interstitial APPEARING is the pass, and a run that sailed through to a Full Trial would mean the gate is not holding. Everything downstream depends on that one moment, so it is the guard.",
+  "extends": "_base",
+  "description": "Pairs with flows/jm-chambers.json. Tests a REFUSAL, which inverts the usual logic: here the interstitial APPEARING is the pass, and a run that sailed through to a Full Trial would mean the gate is not holding. Only the task-specific items live here; the universals come from _base. Note how few claims are left for a human — the content ones are now string assertions over the a11y snapshot, which the loop was already holding and used to throw away.",
   "items": [
+    {
+      "id": "base-no-failed-requests",
+      "claim": "No request failed except the DESIGNED 402 on the trial route",
+      "falsifiedBy": "any 4xx/5xx that is not a 402. The 402 IS the gate working; anything else on this path is the gate breaking. Overrides the base item, which would fail on the expected refusal",
+      "check": { "type": "noFailedRequest", "matching": "^(?!402\\b)" }
+    },
     {
       "id": "trial-requested",
       "claim": "A Full Trial was actually requested (not a Quick Ruling by accident)",
@@ -29,29 +36,37 @@
       "dependsOn": ["chambers-offered"]
     },
     {
-      "id": "no-page-errors",
-      "claim": "No uncaught exceptions or unhandled rejections on the refusal path",
-      "falsifiedBy": "any page error — this path has never run before, so it is the likeliest place for one",
-      "check": { "type": "noPageError" }
+      "id": "in-voice",
+      "claim": "The refusal speaks like a bench, not like a SaaS",
+      "falsifiedBy": "the offer screen carrying the bench's line would be absent. Product #6C: every seam the user meets is in-world or the theatre cracks",
+      "check": { "type": "snapshotContains", "match": "one full trial a day", "at": "chambers offered" },
+      "dependsOn": ["chambers-offered"]
     },
     {
-      "id": "no-console-errors",
-      "claim": "No console errors on the refusal path",
-      "falsifiedBy": "any console error. A 402 handled correctly should NOT surface as a console error; if it does, the client is treating a designed refusal as a fault",
-      "check": { "type": "noConsoleError" }
+      "id": "no-saas-register",
+      "claim": "Nowhere in the run does the product say 'quota', 'limit reached' or 'upgrade to Pro'",
+      "falsifiedBy": "any of that copy on screen at any point. The in-voice check above proves the right words are present; this proves the wrong ones are not, which is the half a positive check cannot cover",
+      "check": { "type": "snapshotAbsent", "match": "quota|limit reached|upgrade to pro|try again tomorrow" }
     },
     {
-      "id": "no-unexpected-failed-requests",
-      "claim": "No request failed except, possibly, the DESIGNED 402 on the trial route",
-      "falsifiedBy": "any 4xx/5xx that is not a 402. The 402 is the gate working; anything else on this path is the gate breaking. Whether a 402 appears at all depends on which layer caught it first — the client pre-flight refuses before the request is made, so its ABSENCE here is not evidence the server gate is missing",
-      "check": { "type": "noFailedRequest", "matching": "^(?!402\\b)" }
+      "id": "real-docket",
+      "claim": "The chambers ruling carries a real case number, not the JM-LIVE-PREVIEW placeholder",
+      "falsifiedBy": "the placeholder on screen — the ruling was never persisted, so there is no permalink and no record",
+      "check": { "type": "snapshotContains", "match": "CASE NO\\." },
+      "dependsOn": ["ruling-delivered"]
+    },
+    {
+      "id": "no-placeholder-docket",
+      "claim": "…and specifically NOT the placeholder",
+      "falsifiedBy": "JM-LIVE-PREVIEW anywhere on screen",
+      "check": { "type": "snapshotAbsent", "match": "JM-LIVE-PREVIEW" },
+      "dependsOn": ["ruling-delivered"]
     },
     {
       "id": "ruling-complete",
-      "claim": "The chambers ruling is COMPLETE — not the 3-finding truncation the old paywall gave",
-      "falsifiedBy": "a findings list capped at 3 with an unlock teaser. That would reproduce the exact failure the downgrade replaced, one tier down and invisibly",
-      "check": { "type": "manual" },
-      "watch": "full charge list in frame",
+      "claim": "The chambers ruling is COMPLETE — no unlock teaser, nothing withheld",
+      "falsifiedBy": "an unlock/upgrade teaser under a truncated charge list. That would reproduce the exact failure the downgrade replaced, one tier down and invisibly",
+      "check": { "type": "snapshotAbsent", "match": "unlock|see all findings|remaining findings" },
       "dependsOn": ["ruling-delivered"]
     },
     {
@@ -61,14 +76,6 @@
       "check": { "type": "manual" },
       "judgeBy": "the stored review record",
       "dependsOn": ["ruling-delivered"]
-    },
-    {
-      "id": "in-voice",
-      "claim": "The refusal stays in the cave — courtroom register, never 'quota exceeded' or 'upgrade to Pro'",
-      "falsifiedBy": "any SaaS-register copy on the interstitial. Product #6C: every seam the user meets is in-world or the theatre cracks",
-      "check": { "type": "manual" },
-      "watch": "chambers offered",
-      "dependsOn": ["chambers-offered"]
     }
   ]
 }

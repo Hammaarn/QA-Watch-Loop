@@ -25,6 +25,10 @@
  *                        this is what --manual cannot do. See flows/.
  *   --checklist <file>   resolve a Phase 0 checklist against this run's evidence
  *                        and print the verdict table. See checklists/.
+ *   --shots              stills instead of video: one PNG per chapter, no webm.
+ *                        ASK FIRST: does this change have animated elements that
+ *                        need video? If not, use this — it is cheaper, and
+ *                        stills diff between runs where a tape cannot.
  *   --session <name>     agent-browser session name (optional)
  *
  * Alongside the .webm it writes <out>.evidence.json — console errors, page
@@ -41,7 +45,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createCollector, formatEvidence, makeAgentBrowser } from "./lib/agent-browser.mjs";
 import { loadFlow, runFlow } from "./lib/flow.mjs";
-import { formatVerdict, formatVerdictMarkdown, loadChecklist, resolveChecklist } from "./lib/checklist.mjs";
+import { formatVerdict, formatVerdictMarkdown, loadChecklistFile, resolveChecklist } from "./lib/checklist.mjs";
 import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -65,6 +69,17 @@ const session = opt("session");
 const flowPath = opt("flow");
 const checklistPath = opt("checklist");
 
+// ── VIDEO OR STILLS ─────────────────────────────────────────────────────────
+// The question to answer BEFORE every run (Erik's rule): does the change under
+// test have animated elements that need video inspection? If not, take stills.
+//
+// Measured on real runs: a tape costs 7-10 MB and gets five frames looked at,
+// while the evidence sidecar does most of the actual work. Stills are cheaper,
+// land one per chapter, and can be diffed between runs — video cannot. Motion
+// is the exception that earns the tape, not the default that assumes it.
+const shotsMode = has("shots");
+const shotsDir = shotsMode ? resolve(out).replace(/\.webm$/i, "") + "-shots" : null;
+
 // Load the checklist BEFORE touching the browser. It is validated at load (every
 // item needs a falsifier, guards must precede dependents), and finding that out
 // after a four-minute recording — when the evidence is already collected and the
@@ -72,7 +87,7 @@ const checklistPath = opt("checklist");
 let checklist = null;
 if (checklistPath) {
   try {
-    checklist = loadChecklist(readFileSync(checklistPath, "utf-8"));
+    checklist = loadChecklistFile(checklistPath);
   } catch (e) {
     console.error(`[record-loop] bad checklist: ${e?.message ?? e}`);
     process.exit(1);
@@ -89,7 +104,7 @@ const query = makeAgentBrowser({ session, timeoutMs: 15_000 });
 // S#259 — the evidence collector. The tape is watched by a model looking at
 // pixels; console errors, page errors and failed requests are invisible to it.
 // These are deterministic, cost no tokens, and are REPORTED not enforced.
-const evidence = createCollector({ abOut: query.abOut, ab: query.ab });
+const evidence = createCollector({ abOut: query.abOut, ab: query.ab, shots: shotsDir });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -119,6 +134,10 @@ const writeArtifacts = ({ failed = false } = {}) => {
   for (const line of formatVerdict(resolved)) console.log(line);
   const verdictPath = `${resolve(out)}.verdict.md`;
   writeFileSync(verdictPath, formatVerdictMarkdown(resolved, { tape: out }), "utf-8");
+  // The machine-readable twin, for compare-runs.mjs. Only worth reading when the
+  // SAME loop has run more than once — a single run has nothing to compare to,
+  // which is exactly why this tool keeps no history of its own.
+  writeFileSync(`${resolve(out)}.verdict.json`, JSON.stringify(resolved, null, 2), "utf-8");
   console.log(`[record-loop] verdict: ${verdictPath}`);
   if (failed) {
     console.log(
@@ -155,14 +174,20 @@ try {
   //    and can drop the viewport we just set).
   // abDetached: the recorder outlives us and would otherwise hold our stderr,
   // wedging any pipe our own output is written to. See abDetached()'s note.
-  abDetached("record", "start", resolve(out));
-  recording = true;
+  if (shotsMode) {
+    mkdirSync(shotsDir, { recursive: true });
+    console.log(`[record-loop] stills ${vw}x${vh} -> ${shotsDir}`);
+  } else {
+    abDetached("record", "start", resolve(out));
+    recording = true;
+    console.log(`[record-loop] recording ${vw}x${vh} -> ${out}`);
+  }
   evidence.mark("record-start", `${vw}x${vh}`);
   // AFTER record start: starting a recording reloads the page, which would wipe
   // a hook installed earlier. See installErrorHook() for why the built-ins are
   // not enough on their own.
   evidence.installErrorHook();
-  console.log(`[record-loop] recording ${vw}x${vh} -> ${out}`);
+  evidence.captureScreen("start");
 
   if (has("manual")) {
     console.log("[record-loop] --manual: browser is yours. Drive the flow, then run:");
@@ -178,7 +203,9 @@ try {
     console.log(`[record-loop] flow: ${flow.name ?? flowPath} (${flow.steps.length} steps)`);
     await runFlow(flow, {
       ab, abOut: query.abOut, sleep,
-      mark: (e, d) => evidence.mark(e, d),
+      // Capture the screen at every step, not just mark it. This is what makes
+      // a content claim decidable — and in stills mode it IS the recording.
+      mark: (e, d) => { evidence.mark(e, d); evidence.captureScreen(d ?? e); },
       collect: () => evidence.collect(),
       log: (m) => console.log(m),
     });
@@ -211,13 +238,13 @@ try {
   }
   }
 
-  ab("record", "stop");
-  recording = false;
+  evidence.captureScreen("end");
+  if (recording) { ab("record", "stop"); recording = false; }
   evidence.mark("record-stop");
   evidence.collect(); // final drain — late errors still belong to this tape
   cleanup(false);
 
-  console.log(`[record-loop] saved: ${out}`);
+  console.log(`[record-loop] saved: ${shotsMode ? shotsDir : out}`);
   const resolved = writeArtifacts();
 
   if (resolved) {

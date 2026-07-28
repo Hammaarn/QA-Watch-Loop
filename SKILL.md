@@ -21,10 +21,17 @@ prose cannot:
 
 - **`falsifiedBy` is mandatory** — an item without one is rejected at load. If you cannot say what
   would disprove a claim, you have written a hope, not a checklist item.
+- **Write only what is task-specific.** `"extends": "_base"` pulls in the criteria every run owes
+  (no page errors, no console errors, no failed requests, the run finished). Reusing a base item's
+  id overrides it — that is how you say "this flow legitimately expects a 402".
 - **The machine decides what it actually can**, and says UNJUDGEABLE for everything else *with the
   timestamp to look at*. It resolves `chapter` (did the run REACH this moment, and by when),
-  `noConsoleError` / `noPageError` / `noFailedRequest`. Anything visual, or living in a server log,
-  is `manual` — permanently unjudgeable here, and pointed at its channel via `judgeBy`.
+  `noConsoleError` / `noPageError` / `noFailedRequest`, and — the ones that matter most —
+  `snapshotContains` / `snapshotAbsent` over the accessibility tree captured at every chapter.
+  **Reach for those before you write `manual`.** "The verdict shows a real case number", "nothing
+  says *quota exceeded*", "no unlock teaser" all *look* like visual judgements and are actually
+  string assertions. `manual` is for genuine taste, and for claims living somewhere this cannot see
+  (a server log, a database row) — those carry `judgeBy` to name the channel.
 - **Guards cascade.** An item can `dependsOn` an earlier one. If the guard did not pass, the
   dependent goes UNJUDGEABLE, never FAIL — a claim that was never exercised is untested, not false,
   and recording it as a failure is exactly as wrong as recording it as a pass.
@@ -34,11 +41,22 @@ Two invariants the resolver will not let you break:
 1. **It never invents a PASS.** A `manual` item cannot drift into PASS no matter how clean the run.
 2. **An unread channel is not an empty one.** If evidence collection failed, every absence-based
    item is withheld as UNJUDGEABLE rather than passed. (This is the false-clean bug that once
-   reported an unreadable channel as a clean one, promoted into a rule.)
+   reported an unreadable channel as a clean one, promoted into a rule.) The same applies to
+   content: **nothing captured is not nothing present** — with no snapshots, `snapshotContains` and
+   `snapshotAbsent` both withhold rather than guess.
 
 `node scripts/check-checklist.mjs --selftest` proves all of that still holds.
 
 ## Phase 1 — record
+
+**Ask this first, every time: does the change under test have animated elements that need video
+inspection?** Motion, transitions, a cursor synced to narration, a curtain — those earn a tape.
+Everything else takes **stills** (`--shots`): one PNG per chapter, no webm.
+
+This is not a micro-optimisation. Measured on real runs, a tape costs 7–10 MB and gets about five
+frames actually looked at, while the evidence sidecar does most of the work. Stills are cheaper,
+land exactly at the moments you named, and **can be diffed between runs** — a video cannot. Video is
+the exception that earns itself, not the default that assumes it.
 
 Use `scripts/record-loop.mjs`, or drive agent-browser yourself:
 
@@ -98,6 +116,13 @@ table, and the exit code is 1 only if a machine-checkable claim came back FALSE.
 are now your entire job** — the run is not verified until you judge them, and the verdict's
 **Judge by** column says where to look. Do not let a green exit code read as a verified run; it
 means nothing measurable broke, not that the feature works.
+
+**Running the same loop more than once?** Then, and only then, compare:
+`node scripts/compare-runs.mjs a.webm.verdict.json b.webm.verdict.json [...]`. Run it N times
+unchanged to find **flake** (an item that moves and comes back is worse than no check — it teaches
+you to ignore the instrument); run it before and after a change to find **regressions**. The loop
+keeps no history of its own on purpose: a journey run once has nothing to compare against, so a
+baseline store would spend disk and trust on a comparison nobody asked for.
 
 Then fill `templates/QA-WATCH-REPORT.md`. Rules:
 

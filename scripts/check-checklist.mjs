@@ -34,6 +34,7 @@ import {
   formatVerdict,
   formatVerdictMarkdown,
   loadChecklist,
+  loadChecklistFile,
   resolveChecklist,
 } from "./lib/checklist.mjs";
 
@@ -108,6 +109,72 @@ if (args.includes("--selftest")) {
   assert.equal(resolveChecklist(base, ev()).summary.fail, 0);
   assert.ok(resolveChecklist(base, ev()).summary.unjudgeable >= 1);
 
+  // 9. SNAPSHOT CONTENT CHECKS — the ones that turn "a human must look" into a
+  //    decided verdict. These are string assertions over a tree the loop already
+  //    holds; the first version of this file had none, so they get real cover.
+  const snapList = {
+    items: [
+      { id: "has", claim: "case number on screen", falsifiedBy: "placeholder", check: { type: "snapshotContains", match: "CASE NO\\. JM-" } },
+      { id: "hasnt", claim: "no SaaS register", falsifiedBy: "quota copy", check: { type: "snapshotAbsent", match: "quota exceeded" } },
+      { id: "scoped", claim: "offer visible at the offer chapter", falsifiedBy: "absent there", check: { type: "snapshotContains", match: "chambers", at: "offered" } },
+    ],
+  };
+  const withSnaps = (snaps) => ({ ...ev(), snapshots: snaps });
+  let r = resolveChecklist(snapList, withSnaps([
+    { t: 3, label: "offered", text: "Take it in chambers" },
+    { t: 9, label: "verdict", text: "CASE NO. JM-ABC123" },
+  ]));
+  assert.equal(verdictOf(r, "has"), PASS);
+  assert.equal(verdictOf(r, "hasnt"), PASS);
+  assert.equal(verdictOf(r, "scoped"), PASS);
+
+  // present-when-it-must-not-be is a FAIL, not a pass-by-silence
+  r = resolveChecklist(snapList, withSnaps([{ t: 1, label: "x", text: "your quota exceeded, upgrade to Pro" }]));
+  assert.equal(verdictOf(r, "hasnt"), FAIL);
+  assert.equal(verdictOf(r, "has"), FAIL);
+
+  // NOTHING CAPTURED IS NOT NOTHING PRESENT — with no snapshots, both
+  // directions must withhold rather than invent a verdict.
+  r = resolveChecklist(snapList, withSnaps([]));
+  assert.equal(verdictOf(r, "has"), UNJUDGEABLE);
+  assert.equal(verdictOf(r, "hasnt"), UNJUDGEABLE);
+
+  // a scoped check whose chapter never happened is UNJUDGEABLE, not FAIL
+  r = resolveChecklist(snapList, withSnaps([{ t: 1, label: "somewhere-else", text: "chambers" }]));
+  assert.equal(verdictOf(r, "scoped"), UNJUDGEABLE);
+
+  // an unreadable snapshot channel poisons the ABSENCE direction
+  r = resolveChecklist(snapList, {
+    ...withSnaps([{ t: 1, label: "x", text: "nothing" }]),
+    collectionFailures: [{ channel: "snapshot", reason: "ETIMEDOUT" }],
+  });
+  assert.equal(verdictOf(r, "hasnt"), UNJUDGEABLE);
+
+  // 10. `extends` composition — base items come first, and a task item with the
+  //     same id REPLACES the base one rather than duplicating it.
+  const files = {
+    "/c/task.json": JSON.stringify({
+      name: "task", extends: "_base",
+      items: [
+        { id: "base-no-console-errors", claim: "overridden", falsifiedBy: "x", check: { type: "manual" } },
+        { id: "task-only", claim: "task", falsifiedBy: "y", check: { type: "manual" } },
+      ],
+    }),
+    "/c/_base.json": JSON.stringify({
+      name: "base",
+      items: [
+        { id: "base-no-console-errors", claim: "from base", falsifiedBy: "x", check: { type: "noConsoleError" } },
+        { id: "base-no-page-errors", claim: "from base", falsifiedBy: "x", check: { type: "noPageError" } },
+      ],
+    }),
+  };
+  const merged = loadChecklistFile("/c/task.json", {
+    readFile: (p) => files[p],
+    resolvePath: (_from, ext) => `/c/${ext}.json`,
+  });
+  assert.deepEqual(merged.items.map((i) => i.id), ["base-no-page-errors", "base-no-console-errors", "task-only"]);
+  assert.equal(merged.items.find((i) => i.id === "base-no-console-errors").claim, "overridden");
+
   console.log("[check-checklist] selftest OK");
   process.exit(0);
 }
@@ -123,7 +190,7 @@ if (!checklistPath || !evidencePath) {
 let checklist;
 let evidence;
 try {
-  checklist = loadChecklist(readFileSync(checklistPath, "utf-8"));
+  checklist = loadChecklistFile(checklistPath);
   evidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
 } catch (e) {
   console.error(`[check-checklist] FAILED to load: ${e?.message ?? e}`);

@@ -41,6 +41,9 @@
  *     0 exists to prevent.
  */
 
+import { readFileSync as nodeReadFileSync } from "node:fs";
+import { dirname as nodeDirname, resolve as nodeResolve } from "node:path";
+
 /** Case-insensitive regex, same convention as flow.mjs's `waitFor`. */
 const re = (pattern) => new RegExp(pattern, "i");
 
@@ -53,9 +56,37 @@ export const UNJUDGEABLE = "UNJUDGEABLE";
  * collection silently turns into false good news, so they are named in one
  * place rather than tested for ad hoc.
  */
-const ABSENCE_CHECKS = new Set(["noConsoleError", "noPageError", "noFailedRequest"]);
+const ABSENCE_CHECKS = new Set(["noConsoleError", "noPageError", "noFailedRequest", "snapshotAbsent"]);
 
-const KNOWN_CHECKS = new Set([...ABSENCE_CHECKS, "chapter", "manual"]);
+const KNOWN_CHECKS = new Set([...ABSENCE_CHECKS, "chapter", "snapshotContains", "manual"]);
+
+/**
+ * Load a checklist FILE, resolving `extends` against a shared base.
+ *
+ * WHY: every checklist re-declared the same three items — no console errors, no
+ * page errors, no failed requests. Re-typing a universal check per task is how
+ * one of them quietly gets left out of the file where it mattered, and it makes
+ * a checklist read as bespoke when most of it is not. So the universals live in
+ * ONE file and a task checklist declares only what is task-specific.
+ *
+ * Base items come FIRST so they can guard task items, and a task item may
+ * OVERRIDE a base one by reusing its id — the task always wins, since the whole
+ * point of a base is to be a sensible default rather than a straitjacket.
+ */
+export function loadChecklistFile(path, { readFile, resolvePath } = {}) {
+  const read = readFile ?? ((p) => nodeReadFileSync(p, "utf-8"));
+  const list = JSON.parse(read(path));
+  if (!list.extends) return loadChecklist(list);
+
+  const basePath = resolvePath
+    ? resolvePath(path, list.extends)
+    : nodeResolve(nodeDirname(path), list.extends.endsWith(".json") ? list.extends : `${list.extends}.json`);
+  const base = JSON.parse(read(basePath));
+
+  const overridden = new Set((list.items ?? []).map((i) => i.id));
+  const merged = [...(base.items ?? []).filter((i) => !overridden.has(i.id)), ...(list.items ?? [])];
+  return loadChecklist({ ...list, items: merged, extends: undefined });
+}
 
 export function loadChecklist(json) {
   const list = typeof json === "string" ? JSON.parse(json) : json;
@@ -85,6 +116,9 @@ export function loadChecklist(json) {
     if (type === "chapter" && !item.check.match) {
       throw new Error(`${where}: a chapter check needs \`match\``);
     }
+    if ((type === "snapshotContains" || type === "snapshotAbsent") && !item.check.match) {
+      throw new Error(`${where}: a ${type} check needs \`match\``);
+    }
 
     // Guards must be declared before what they guard. This keeps resolution a
     // single forward pass and makes a dependency cycle unrepresentable rather
@@ -112,6 +146,12 @@ export function resolveChecklist(checklist, evidence) {
   const pageErrors = evidence?.pageErrors ?? [];
   const failedRequests = evidence?.failedRequests ?? [];
   const collectionFailures = evidence?.collectionFailures ?? [];
+  // Accessibility snapshots captured at each chapter (deduped). This is what
+  // lets a content claim be DECIDED rather than handed to a human — the first
+  // version of this file had no such check, so "the verdict shows a real case
+  // number, not the placeholder" was filed as a visual judgement when it is a
+  // string assertion over a tree the loop was already holding.
+  const snapshots = evidence?.snapshots ?? [];
 
   /** `flow charges + receipts in frame` — event and detail searched as one line. */
   const chapterText = (c) => `${c.event ?? ""} ${c.detail ?? ""}`.trim();
@@ -188,6 +228,43 @@ export function resolveChecklist(checklist, evidence) {
         } else {
           result.verdict = PASS;
           result.why = matching ? `no match for /${matching}/i across ${pool.length} entr(ies)` : "none recorded";
+        }
+        break;
+      }
+
+      case "snapshotContains":
+      case "snapshotAbsent": {
+        // NOTHING CAPTURED IS NOT NOTHING PRESENT. With no snapshots there is
+        // no evidence either way, so both directions are UNJUDGEABLE — the
+        // absent-channel rule applied to presence as well, because "we never
+        // looked" must never read as "we looked and it was fine".
+        if (snapshots.length === 0) {
+          result.verdict = UNJUDGEABLE;
+          result.why = "no accessibility snapshots were captured — nothing to search";
+          break;
+        }
+        const scope = item.check.at
+          ? snapshots.filter((s) => re(item.check.at).test(s.label ?? ""))
+          : snapshots;
+        if (scope.length === 0) {
+          result.verdict = UNJUDGEABLE;
+          result.why = `no snapshot captured at a chapter matching /${item.check.at}/i — that moment was never reached`;
+          break;
+        }
+        const hit = scope.find((s) => re(match).test(s.text ?? ""));
+        const where = item.check.at ? ` at /${item.check.at}/i` : "";
+        if (type === "snapshotContains") {
+          result.verdict = hit ? PASS : FAIL;
+          result.at = hit?.t ?? null;
+          result.why = hit
+            ? `found on screen at +${hit.t}s ("${hit.label ?? "?"}")`
+            : `never on screen${where} across ${scope.length} snapshot(s)`;
+        } else {
+          result.verdict = hit ? FAIL : PASS;
+          result.at = hit?.t ?? null;
+          result.why = hit
+            ? `present at +${hit.t}s ("${hit.label ?? "?"}") — it must not be`
+            : `absent${where} across ${scope.length} snapshot(s)`;
         }
         break;
       }
