@@ -1,0 +1,50 @@
+{
+  "name": "jm-full-trial",
+  "description": "JudgeMySite: submit a site for a live Full Trial and wait for the verdict, then scroll the verdict surfaces into frame. The worked example — every step matches on-screen text, never a ref.",
+  "steps": [
+    {
+      "do": "fill",
+      "match": "EXHIBIT A",
+      "value": "https://sindresorhus.com",
+      "chapter": "url entered"
+    },
+    {
+      "do": "click",
+      "match": "The Elitist",
+      "chapter": "judge picked"
+    },
+    {
+      "do": "click",
+      "match": "FULL TRIAL Recommended",
+      "chapter": "mode: full trial"
+    },
+    {
+      "comment": "The submit button is ABSENT from the a11y tree until the URL field is non-empty — it renders disabled. Hence it is matched here, after the fill, not before.",
+      "do": "click",
+      "match": "SUBMIT FOR FULL TRIAL",
+      "chapter": "submitted"
+    },
+    {
+      "comment": "The long phase: capture, examination, synthesis. Polls every 5s and keeps sampling evidence, so the minutes spent here are not blind.",
+      "do": "waitFor",
+      "match": "CASE NO|entered in the record",
+      "timeoutS": 600,
+      "chapter": "verdict landed"
+    },
+    {
+      "comment": "Bring the verdict surfaces into frame so the tape carries them: FIRST ORDER band, then the charges with their receipts.",
+      "do": "scroll",
+      "dir": "down",
+      "px": 700,
+      "chapter": "first order in frame"
+    },
+    { "do": "wait", "ms": 2500 },
+    {
+      "do": "scroll",
+      "dir": "down",
+      "px": 900,
+      "chapter": "charges + receipts in frame"
+    },
+    { "do": "wait", "ms": 2500 }
+  ]
+}

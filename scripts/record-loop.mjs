@@ -20,6 +20,9 @@
  *   --manual             start recording and exit 0, leaving the browser up;
  *                        you drive the flow yourself, then run:
  *                        agent-browser record stop && agent-browser close --all
+ *   --flow <file.json>   drive a scripted flow (fill/click/waitFor/scroll), then
+ *                        stop. Unattended, and every step becomes a chapter —
+ *                        this is what --manual cannot do. See flows/.
  *   --session <name>     agent-browser session name (optional)
  *
  * Alongside the .webm it writes <out>.evidence.json — console errors, page
@@ -33,6 +36,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createCollector, formatEvidence, makeAgentBrowser } from "./lib/agent-browser.mjs";
+import { loadFlow, runFlow } from "./lib/flow.mjs";
+import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const opt = (name, fallback = null) => {
@@ -52,6 +57,7 @@ const waitS = Number(opt("wait", "60"));
 const untilRe = opt("until") ? new RegExp(opt("until"), "i") : null;
 const timeoutS = Number(opt("timeout", "600"));
 const session = opt("session");
+const flowPath = opt("flow");
 
 const { ab, abOut, abDetached } = makeAgentBrowser({ session });
 // Evidence reads get their own SHORT timeout. They are all fast queries against
@@ -111,6 +117,18 @@ try {
     process.exit(0); // deliberately NO cleanup — the operator owns the session now
   }
 
+  // --flow: drive the scripted steps, then stop. This is the unattended path —
+  // no operator, full sampling, one chapter per step.
+  if (flowPath) {
+    const flow = loadFlow(readFileSync(flowPath, "utf-8"));
+    console.log(`[record-loop] flow: ${flow.name ?? flowPath} (${flow.steps.length} steps)`);
+    await runFlow(flow, {
+      ab, abOut: query.abOut, sleep,
+      mark: (e, d) => evidence.mark(e, d),
+      collect: () => evidence.collect(),
+      log: (m) => console.log(m),
+    });
+  } else {
   // Sample on a fixed 5s beat in BOTH drive modes. --until already polls at that
   // cadence; --wait used to sleep straight through, which meant a fixed-duration
   // recording gathered no evidence at all.
@@ -136,6 +154,7 @@ try {
     console.log(matched
       ? `[record-loop] --until matched after ${Math.round((Date.now() - t0) / 1000)}s`
       : `[record-loop] --until TIMED OUT after ${timeoutS}s (tape kept — judge what you have)`);
+  }
   }
 
   ab("record", "stop");
