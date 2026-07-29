@@ -17,6 +17,8 @@
  *   --tape <path.webm>   reads <path.webm>.evidence.json
  *   --evidence <file>    the evidence json directly (overrides --tape)
  *   --out <file.md>      write the markdown verdict (default: <evidence>.verdict.md)
+ *   --pass <name>        resolve as that pass, so items declaring `passes`
+ *                        scope correctly (N/A rather than a false FAIL)
  *   --selftest           run the built-in checks and exit
  *
  * Exit codes: 0 no FAILs · 1 at least one FAIL · 2 bad args / unreadable input.
@@ -175,6 +177,56 @@ if (args.includes("--selftest")) {
   assert.deepEqual(merged.items.map((i) => i.id), ["base-no-page-errors", "base-no-console-errors", "task-only"]);
   assert.equal(merged.items.find((i) => i.id === "base-no-console-errors").claim, "overridden");
 
+  // 11. PASS SCOPING. A responsive app hides the sidebar on a phone, so a
+  //     desktop-only claim must go N/A there — never FAIL, and never quietly
+  //     PASS either.
+  const scopedList = {
+    items: [
+      { id: "everywhere", claim: "verdict renders", falsifiedBy: "absent", check: { type: "snapshotContains", match: "CASE NO" } },
+      { id: "desktop-only", claim: "sidebar visible", falsifiedBy: "absent", passes: ["desktop"], check: { type: "snapshotContains", match: "sidebar" } },
+    ],
+  };
+  const phoneEv = { ...ev(), snapshots: [{ t: 2, label: "end", text: "CASE NO. JM-1" }] };
+
+  // On the pass it is declared for, it resolves normally (and here, fails honestly).
+  let d = resolveChecklist(scopedList, phoneEv, { pass: "desktop" });
+  assert.equal(verdictOf(d, "desktop-only"), FAIL);
+
+  // On any other pass it is N/A — not FAIL, and not folded into UNJUDGEABLE,
+  // because UNJUDGEABLE is the operator's work queue.
+  let m = resolveChecklist(scopedList, phoneEv, { pass: "iphone-12" });
+  assert.equal(verdictOf(m, "desktop-only"), "N/A");
+  assert.equal(verdictOf(m, "everywhere"), PASS);
+  assert.equal(m.summary.notApplicable, 1);
+  assert.equal(m.summary.fail, 0);
+  assert.equal(m.summary.unjudgeable, 0);
+  assert.equal(m.summary.total, 2);
+
+  // Unscoped resolution (single-pass runs) is unchanged — the feature must be
+  // invisible when nobody asked for it.
+  assert.equal(verdictOf(resolveChecklist(scopedList, phoneEv), "desktop-only"), FAIL);
+
+  // An item guarded by something that was N/A here is UNJUDGEABLE, not FAIL:
+  // a claim resting on something never exercised on this pass is untested.
+  const guardedByScoped = {
+    items: [
+      { id: "desktop-only", claim: "sidebar", falsifiedBy: "absent", passes: ["desktop"], check: { type: "snapshotContains", match: "sidebar" } },
+      { id: "needs-sidebar", claim: "sidebar collapses", falsifiedBy: "stays open", dependsOn: ["desktop-only"], check: { type: "manual" } },
+    ],
+  };
+  const g = resolveChecklist(guardedByScoped, phoneEv, { pass: "iphone-12" });
+  assert.equal(verdictOf(g, "needs-sidebar"), UNJUDGEABLE);
+
+  // `passes` is validated at load, like every other contract in this file.
+  assert.throws(
+    () => loadChecklist({ items: [{ id: "a", claim: "c", falsifiedBy: "x", passes: [], check: { type: "manual" } }] }),
+    /non-empty array of pass names/,
+  );
+  assert.throws(
+    () => loadChecklist({ items: [{ id: "a", claim: "c", falsifiedBy: "x", passes: "desktop", check: { type: "manual" } }] }),
+    /non-empty array of pass names/,
+  );
+
   console.log("[check-checklist] selftest OK");
   process.exit(0);
 }
@@ -197,7 +249,9 @@ try {
   process.exit(2);
 }
 
-const resolved = resolveChecklist(checklist, evidence);
+// --pass scopes items declaring `passes`, so an old evidence file from a mobile
+// run can be re-resolved without desktop-only items turning into false FAILs.
+const resolved = resolveChecklist(checklist, evidence, { pass: opt("pass") });
 for (const line of formatVerdict(resolved)) console.log(line);
 
 const outPath = opt("out") ?? `${evidencePath.replace(/\.evidence\.json$/, "")}.verdict.md`;

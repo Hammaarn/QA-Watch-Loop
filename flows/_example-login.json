@@ -1,0 +1,35 @@
+{
+  "name": "example — log in, then land on the thing under test",
+  "note": [
+    "THE RULE THIS FILE EXISTS TO DEMONSTRATE: no credential is ever a literal here.",
+    "`requires` is checked at LOAD, before the browser opens, so a missing variable",
+    "costs you a second rather than a four-minute recording. A resolved value never",
+    "reaches a chapter label, the evidence JSON or the verdict table — the label",
+    "names the FIELD, never what went into it.",
+    "",
+    "  export QA_USER=me@example.com QA_PASSWORD='...'",
+    "  node scripts/check-flow.mjs flows/_example-login.json    # validate, no browser",
+    "  node scripts/record-loop.mjs --url https://app/login --out out/r.webm --shots \\",
+    "    --flow flows/_example-login.json --auth-check 'Sign out' --save-state ./auth.json",
+    "",
+    "PREFER NOT DOING THIS EVERY RUN. Logging in through the UI on every loop is slow",
+    "and makes every run depend on the login page still working. Do it ONCE with",
+    "--save-state, then use --state ./auth.json afterwards. This flow is for the first",
+    "run, and for when the login page itself is what you are testing.",
+    "",
+    "Match strings are what a human READS on screen (a11y text), never refs — refs",
+    "shift per snapshot, and a pinned one would silently click the wrong element."
+  ],
+  "requires": ["QA_USER", "QA_PASSWORD"],
+  "steps": [
+    { "do": "fill", "match": "Email", "value": "${QA_USER}", "chapter": "email entered" },
+    { "do": "fill", "match": "Password", "value": "${QA_PASSWORD}", "chapter": "password entered" },
+    { "do": "click", "match": "Sign in", "chapter": "submitted" },
+    {
+      "do": "waitFor",
+      "match": "(Sign out|Dashboard|Log out)",
+      "timeoutS": 45,
+      "chapter": "logged in"
+    }
+  ]
+}

@@ -58,6 +58,56 @@ frames actually looked at, while the evidence sidecar does most of the work. Sti
 land exactly at the moments you named, and **can be diffed between runs** — a video cannot. Video is
 the exception that earns itself, not the default that assumes it.
 
+**Then ask the second question: does this change need to hold on a phone?** If yes, run it as
+passes rather than as two unrelated commands:
+
+```bash
+node scripts/record-loop.mjs --url <url> --out out/run.webm --shots \
+  --passes desktop,iphone-12 --flow flows/<f>.json --checklist checklists/<c>.json
+```
+
+The flow runs once per pass, the browser is fully reset between them, and at the end you get the
+thing a second command by hand never produced: **a cross-pass report naming every item whose verdict
+DIFFERS between devices**. `BREAKS-ON` — passes on one, fails on another — is the finding the whole
+feature exists for; judge those first.
+
+`device:` passes use real Playwright emulation (UA, touch, DPR), not a narrow window. That
+distinction is load-bearing: a 390px desktop Chrome still sends a desktop UA and still gets hover
+styles, so a UA-gated layout or a tap-only handler passes a resize test and fails on the phone.
+`node scripts/check-passes.mjs --list` shows the profiles.
+
+**Scope items that a responsive layout is *supposed* to change.** An item's `passes: ["desktop"]`
+makes it **N/A** elsewhere — not FAIL, and not folded into UNJUDGEABLE (which is your work queue).
+A check that is wrong by design on one pass is worse than no check: it teaches you to skim past red.
+
+### Behind a login
+
+The loop wires agent-browser's own auth; it does not implement any of its own.
+
+```bash
+# once, by hand — the password never touches a file you commit
+echo "$PASS" | agent-browser auth save myapp --url https://app/login --username me --password-stdin
+agent-browser auth login myapp && agent-browser state save ./auth.json
+
+# then, every run
+node scripts/record-loop.mjs --url https://app/dash --out out/r.webm \
+  --state ./auth.json --auth-check "Sign out" --flow flows/x.json
+```
+
+- `--state <file>` loads cookies/localStorage at context creation · `--save-state <file>` writes them
+  back after a successful run · `--auth <profile>` logs in through the vault first.
+- **`--auth-check <text>` is not optional paranoia.** `record start` spawns a fresh context and
+  reloads — the same behaviour that already wipes the injected error hook and form fills. Name
+  something only a logged-in user sees and the run stops with a plain message if the session did not
+  survive. Without it, a dropped session records a login page and produces a verdict table full of
+  confident FAILs about features that were never reachable.
+- **Never put a credential in a flow file.** Use `"value": "${MY_PASSWORD}"` and declare
+  `"requires": ["MY_PASSWORD"]`; an unset variable fails at load, before the browser opens, and a
+  resolved value never reaches a chapter label, the evidence JSON or the verdict table. A missing
+  variable is a hard error rather than an empty string, because filling a login form with `""`
+  produces a run that *looks* like it exercised auth. `node scripts/check-flow.mjs <file>` validates
+  one without running it.
+
 Use `scripts/record-loop.mjs`, or drive agent-browser yourself:
 
 1. `agent-browser open <url>` — navigate FIRST.
@@ -153,7 +203,10 @@ scoped to what THIS loop started; report-first, kill deliberately.
 
 ## Known limits (state them in every report)
 
-- Desktop-width recording overstates zoom-out vs mobile; mobile framing needs its own loop.
+- **Device emulation is not a device.** `--passes` gives you a real mobile UA, touch flags and DPR,
+  which is enough to catch layout collapse, tap targets and UA-gated code paths. It is not a real
+  phone: no actual network conditions, no real GPU, no OS chrome eating viewport height, no Safari.
+  A pass is a strong filter, not a substitute for holding the thing.
 - The recording shows the viewport only — background tabs, console, and network are invisible;
   pair the tape with server logs when the failure could be non-visual.
 - Frame sampling can miss sub-second events; if a checklist item is a fast animation, use a

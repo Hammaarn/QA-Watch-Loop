@@ -50,6 +50,16 @@ const re = (pattern) => new RegExp(pattern, "i");
 export const PASS = "PASS";
 export const FAIL = "FAIL";
 export const UNJUDGEABLE = "UNJUDGEABLE";
+/**
+ * Declared not to apply to THIS pass — see `passes` on an item.
+ *
+ * It is deliberately NOT a fourth flavour of unjudgeable. UNJUDGEABLE means "this
+ * still needs a human", and it is the number the operator works through; folding
+ * scoped-out items into it would inflate that number with work that does not
+ * exist and blunt the one signal Phase 3 runs on. N/A means "nobody should look
+ * at this here", so it is counted separately and never gates.
+ */
+export const NOT_APPLICABLE = "N/A";
 
 /**
  * Checks that read the *absence* of something. These are the ones a failed
@@ -109,6 +119,16 @@ export function loadChecklist(json) {
       );
     }
 
+    // Pass scoping. A responsive app legitimately hides the sidebar on a phone,
+    // so "the sidebar is visible" must not become a FAIL there — a check that is
+    // wrong by design on one pass is worse than no check, because it trains the
+    // operator to skim past red.
+    if (item.passes !== undefined) {
+      if (!Array.isArray(item.passes) || item.passes.length === 0 || item.passes.some((p) => typeof p !== "string")) {
+        throw new Error(`${where}: \`passes\` must be a non-empty array of pass names`);
+      }
+    }
+
     const type = item.check?.type;
     if (!KNOWN_CHECKS.has(type)) {
       throw new Error(`${where}: unknown check type ${JSON.stringify(type)} (known: ${[...KNOWN_CHECKS].join(", ")})`);
@@ -140,7 +160,7 @@ export function loadChecklist(json) {
  * Returns verdicts only — printing and exit codes live in the CLI, so this
  * stays testable with plain objects and no I/O.
  */
-export function resolveChecklist(checklist, evidence) {
+export function resolveChecklist(checklist, evidence, { pass = null } = {}) {
   const chapters = evidence?.chapters ?? [];
   const consoleErrors = (evidence?.console ?? []).filter((c) => c.level === "error");
   const pageErrors = evidence?.pageErrors ?? [];
@@ -170,7 +190,20 @@ export function resolveChecklist(checklist, evidence) {
       at: null,
     };
 
-    // A guard that did not hold makes its dependents UNTESTED, not false.
+    // Scoped out of this pass. Checked BEFORE guards: an item that does not
+    // apply here should read as out-of-scope, not as blocked by a guard that
+    // also did not apply.
+    if (pass && Array.isArray(item.passes) && !item.passes.includes(pass)) {
+      result.verdict = NOT_APPLICABLE;
+      result.why = `not declared for pass "${pass}" (applies to: ${item.passes.join(", ")})`;
+      verdicts.set(item.id, result.verdict);
+      results.push(result);
+      continue;
+    }
+
+    // A guard that did not hold makes its dependents UNTESTED, not false. This
+    // covers a guard that was N/A on this pass too — a claim resting on
+    // something never exercised here is untested, whatever the reason.
     const brokenGuard = (item.dependsOn ?? []).find((d) => verdicts.get(d) !== PASS);
     if (brokenGuard) {
       result.verdict = UNJUDGEABLE;
@@ -298,11 +331,15 @@ export function resolveChecklist(checklist, evidence) {
   const count = (v) => results.filter((r) => r.verdict === v).length;
   return {
     name: checklist.name ?? null,
+    ...(pass ? { pass } : {}),
     items: results,
     summary: {
       pass: count(PASS),
       fail: count(FAIL),
       unjudgeable: count(UNJUDGEABLE),
+      // Kept out of the other three on purpose — see NOT_APPLICABLE. `total`
+      // stays the item count so the numbers still reconcile against the file.
+      notApplicable: count(NOT_APPLICABLE),
       total: results.length,
       collectionFailures: collectionFailures.length,
     },
@@ -313,7 +350,11 @@ export function resolveChecklist(checklist, evidence) {
 export function formatVerdict(resolved) {
   const out = [];
   const s = resolved.summary;
-  out.push(`[checklist] ${resolved.name ?? "checklist"} — ${s.pass} PASS · ${s.fail} FAIL · ${s.unjudgeable} UNJUDGEABLE`);
+  out.push(
+    `[checklist] ${resolved.name ?? "checklist"}${resolved.pass ? ` [${resolved.pass}]` : ""} — ` +
+      `${s.pass} PASS · ${s.fail} FAIL · ${s.unjudgeable} UNJUDGEABLE` +
+      (s.notApplicable ? ` · ${s.notApplicable} N/A` : ""),
+  );
 
   if (s.collectionFailures > 0) {
     out.push(
@@ -350,9 +391,11 @@ export function formatVerdictMarkdown(resolved, { tape } = {}) {
   // on "" (the obvious shortcut) also eats the blank line a markdown table needs
   // in front of it, and the table then renders as a wall of pipes.
   const lines = [
-    `# Checklist verdict — ${resolved.name ?? "unnamed"}`,
+    `# Checklist verdict — ${resolved.name ?? "unnamed"}${resolved.pass ? ` (pass: ${resolved.pass})` : ""}`,
     "",
-    `**${s.pass} PASS · ${s.fail} FAIL · ${s.unjudgeable} UNJUDGEABLE** of ${s.total}.`,
+    `**${s.pass} PASS · ${s.fail} FAIL · ${s.unjudgeable} UNJUDGEABLE${
+      s.notApplicable ? ` · ${s.notApplicable} N/A` : ""
+    }** of ${s.total}.`,
     "",
     tape ? `**Tape:** \`${tape}\`` : null,
     tape ? "" : null,

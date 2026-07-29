@@ -37,10 +37,61 @@ export function resolveRef(snapshot, text) {
   return null;
 }
 
-export function loadFlow(json) {
+/**
+ * `${VAR}` → the environment's value.
+ *
+ * A CREDENTIAL MUST NEVER BE A LITERAL IN A FLOW FILE. Flow files are committed,
+ * shared and pasted into reports; a password in one is a password in git history
+ * forever. So a login step names an environment variable and the value is
+ * resolved at run time.
+ *
+ * A MISSING VARIABLE IS A HARD ERROR, never an empty string. Filling a login form
+ * with "" produces a run that looks like it exercised the auth path, fails on a
+ * validation message, and reports whatever it found after — a confidently wrong
+ * result rather than an obvious one.
+ */
+export function interpolate(value, env = process.env) {
+  if (typeof value !== "string") return value;
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => {
+    const v = env[name];
+    if (v === undefined || v === "") {
+      throw new Error(`flow references \${${name}} but that environment variable is unset or empty`);
+    }
+    return v;
+  });
+}
+
+/** Does this string carry an interpolation? Used to keep values out of logs. */
+export const hasInterpolation = (v) => typeof v === "string" && /\$\{[A-Za-z_][A-Za-z0-9_]*\}/.test(v);
+
+export function loadFlow(json, { env = process.env } = {}) {
   const flow = typeof json === "string" ? JSON.parse(json) : json;
   if (!Array.isArray(flow?.steps) || flow.steps.length === 0) {
     throw new Error("flow file needs a non-empty `steps` array");
+  }
+  // Declared requirements are checked at LOAD, before the browser opens — the
+  // same reason the checklist is validated up front. Discovering a missing
+  // credential four minutes into a recording costs a whole run.
+  for (const name of flow.requires ?? []) {
+    if (!env[name]) {
+      throw new Error(
+        `flow "${flow.name ?? "?"}" requires environment variable ${name}, which is unset. ` +
+          "Set it in the shell (never in the flow file).",
+      );
+    }
+  }
+  // Resolve every `${VAR}` now, for the same reason: fail before recording.
+  for (const [i, step] of flow.steps.entries()) {
+    if (step.value === undefined) continue;
+    // Remember that it CAME from the environment before resolving, so the runner
+    // can label the step without printing the secret. After interpolation the
+    // value is indistinguishable from a literal.
+    step.valueFromEnv = hasInterpolation(step.value);
+    try {
+      step.value = interpolate(step.value, env);
+    } catch (e) {
+      throw new Error(`step ${i + 1} (${step.do}): ${e.message}`);
+    }
   }
   return flow;
 }
@@ -66,7 +117,11 @@ export async function runFlow(flow, deps) {
   };
 
   for (const [i, step] of flow.steps.entries()) {
-    const label = step.chapter ?? `${step.do}${step.match ? ` ${step.match}` : ""}`;
+    // The label never contains `value` — a fill's label names the FIELD, not what
+    // went into it, so a password cannot reach a chapter, the evidence JSON, the
+    // verdict table or a pasted report.
+    const label =
+      step.chapter ?? `${step.do}${step.match ? ` ${step.match}` : ""}${step.valueFromEnv ? " (from env)" : ""}`;
     const where = `step ${i + 1} (${step.do})`;
 
     switch (step.do) {

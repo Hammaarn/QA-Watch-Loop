@@ -1,0 +1,56 @@
+{
+  "name": "responsive smoke — the same page on desktop and phone",
+  "extends": "_base",
+  "note": [
+    "The worked example for --passes. Run it as:",
+    "  node scripts/record-loop.mjs --url <url> --out out/r.webm --shots \\",
+    "    --passes desktop,iphone-12 --checklist checklists/responsive-smoke.json --wait 10",
+    "",
+    "What it is FOR: not 'does the phone look nice' (that is taste, and taste is",
+    "yours). It is the narrow, machine-decidable question a second pass can",
+    "actually answer — did the same content arrive, and did anything break that",
+    "only breaks under a mobile UA, touch, or a narrow viewport. The cross-pass",
+    "report at the end is the output; a single pass's table is just half of it.",
+    "",
+    "The `passes` field on an item scopes it. Use it for anything a responsive",
+    "layout is SUPPOSED to change — a check that is wrong by design on one pass",
+    "is worse than no check, because it trains you to skim past red."
+  ],
+  "items": [
+    {
+      "id": "page-loaded",
+      "claim": "the page rendered under this pass at all",
+      "falsifiedBy": "no snapshot captured, or the run never reached the end chapter",
+      "check": { "type": "chapter", "match": "record-start" }
+    },
+    {
+      "id": "content-arrived",
+      "claim": "the page has real text content, not an empty shell or an error page",
+      "falsifiedBy": "the accessibility tree is empty, or shows only an error string",
+      "dependsOn": ["page-loaded"],
+      "check": { "type": "snapshotContains", "match": "\\w{4,}" }
+    },
+    {
+      "id": "no-error-page",
+      "claim": "no framework or server error page was served to this device",
+      "falsifiedBy": "the screen says 404, 500, Application error, or Something went wrong",
+      "dependsOn": ["page-loaded"],
+      "check": { "type": "snapshotAbsent", "match": "(application error|something went wrong|internal server error|\\b(404|500|502|503)\\b)" }
+    },
+    {
+      "id": "no-horizontal-overflow-copy",
+      "claim": "nothing on screen tells the user to rotate or widen the window",
+      "falsifiedBy": "copy like 'rotate your device' or 'best viewed on desktop' appears",
+      "dependsOn": ["page-loaded"],
+      "check": { "type": "snapshotAbsent", "match": "(rotate your (device|phone)|best viewed on (a )?desktop|screen too small)" }
+    },
+    {
+      "id": "mobile-nav-present",
+      "claim": "on a phone there is a way to navigate — a menu control or visible links",
+      "falsifiedBy": "no menu/nav affordance anywhere in the tree on the phone pass",
+      "passes": ["iphone-12", "iphone-se", "pixel-5", "mobile"],
+      "dependsOn": ["page-loaded"],
+      "check": { "type": "snapshotContains", "match": "(menu|navigation|nav\\b|link)" }
+    }
+  ]
+}
