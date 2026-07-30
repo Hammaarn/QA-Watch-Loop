@@ -219,7 +219,13 @@ async function runPass(pass) {
     if (!checklist) return null;
     // The pass name scopes the checklist: items declaring `passes` resolve to N/A
     // anywhere else, so a desktop-only claim never becomes a mobile FAIL.
-    const resolved = resolveChecklist(checklist, report, { pass: multiPass ? pass.name : null });
+    //
+    // ALWAYS pass it, including single-pass runs. This was first gated on
+    // `multiPass` to keep single-pass output byte-identical to before, which
+    // created the exact footgun the feature exists to prevent: the same checklist
+    // on the same device returned N/A under `--passes iphone-12` and a false FAIL
+    // under `--device iphone-12`. A single pass is still a pass.
+    const resolved = resolveChecklist(checklist, report, { pass: pass.name });
     for (const line of formatVerdict(resolved)) console.log(line);
     const verdictPath = `${resolve(passOut)}.verdict.md`;
     writeFileSync(verdictPath, formatVerdictMarkdown(resolved, { tape: passOut }), "utf-8");
@@ -250,11 +256,23 @@ async function runPass(pass) {
     // 1. navigate FIRST. Saved state is applied as a global flag on `open` so the
     //    cookies exist for the very first request rather than being injected into
     //    a page that already loaded logged-out.
+    //
+    // MANUAL MODE OPENS DETACHED (measured S#261). A cold `open` starts the daemon,
+    // which inherits our stderr and keeps holding it after we exit. Every other
+    // mode closes the browser at the end, killing the daemon and releasing the
+    // pipe — but manual mode deliberately leaves it running, so the pipe is held
+    // forever and any caller doing `| tail` sees an infinite hang. Measured: the
+    // same command redirected to a file exits 0 in 3s; piped, it never returns.
+    // This is the identical defect already fixed for `record start`; `open` has it
+    // too and was missed. Detaching costs agent-browser's stderr text on a failed
+    // open (the exit code still throws), which is why it is scoped to the one mode
+    // that needs it rather than applied to every run.
+    const openCmd = has("manual") ? abDetached : ab;
     if (statePath) {
       console.log(`[record-loop] state: loading ${statePath}`);
-      ab("--state", statePath, "open", url);
+      openCmd("--state", statePath, "open", url);
     } else {
-      ab("open", url);
+      openCmd("open", url);
     }
     await sleep(1500);
 
@@ -309,9 +327,13 @@ async function runPass(pass) {
     }
 
     if (has("manual")) {
+      // Manual mode exits before the run's normal postflight line, and it is the
+      // mode most likely to leave a browser behind — the operator owns the session
+      // and nothing reaps it. So the sweep command belongs HERE, with its baseline.
       console.log("[record-loop] --manual: browser is yours. Drive the flow, then run:");
-      console.log(`  node scripts/collect-evidence.mjs --out ${passOut}   # console/network evidence`);
-      console.log("  agent-browser record stop && agent-browser close --all");
+      console.log(`  node scripts/collect-evidence.mjs --out ${passOut}${session ? ` --session ${session}` : ""}   # console/network evidence (do this BEFORE closing)`);
+      console.log(`  agent-browser record stop && agent-browser close`);
+      console.log(`  node scripts/sweep-check.mjs --baseline ${baselinePath}`);
       return { pass, manual: true, exit: 0 }; // deliberately NO cleanup — the operator owns the session now
     }
 

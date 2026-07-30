@@ -202,9 +202,26 @@ if (args.includes("--selftest")) {
   assert.equal(m.summary.unjudgeable, 0);
   assert.equal(m.summary.total, 2);
 
-  // Unscoped resolution (single-pass runs) is unchanged — the feature must be
-  // invisible when nobody asked for it.
+  // Resolution with NO pass at all still ignores scoping — that is what
+  // check-checklist does when re-resolving an old evidence file without --pass,
+  // and it is why record-loop must always supply the pass name.
   assert.equal(verdictOf(resolveChecklist(scopedList, phoneEv), "desktop-only"), FAIL);
+
+  // THE FOOTGUN, PINNED. Scoping must not depend on how the run was invoked.
+  // record-loop originally supplied the pass name only for multi-pass runs, so
+  // `--passes iphone-12` gave N/A while `--device iphone-12` gave a false FAIL on
+  // the identical checklist and device. Any future change that makes the pass
+  // name conditional again fails here.
+  const phonePasses = ["iphone-12", "iphone-se", "pixel-5", "mobile"];
+  for (const p of phonePasses) {
+    assert.equal(
+      verdictOf(resolveChecklist(scopedList, phoneEv, { pass: p }), "desktop-only"),
+      "N/A",
+      `a desktop-scoped item must be N/A on ${p}, never a FAIL`,
+    );
+  }
+  // ...and it must still resolve for real on the pass it IS declared for.
+  assert.equal(verdictOf(resolveChecklist(scopedList, phoneEv, { pass: "desktop" }), "desktop-only"), FAIL);
 
   // An item guarded by something that was N/A here is UNJUDGEABLE, not FAIL:
   // a claim resting on something never exercised on this pass is untested.
