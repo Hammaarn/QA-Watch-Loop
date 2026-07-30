@@ -1,0 +1,29 @@
+{
+  "name": "selftest — log in against a real public test site",
+  "note": [
+    "Exists to exercise the auth path against a REAL login instead of asserting it.",
+    "Target is the-internet.herokuapp.com/login, a long-standing public practice",
+    "site; the credentials below are its published demo pair, not a secret — but",
+    "they still go through ${ENV} because the mechanism is what is under test.",
+    "",
+    "  export QA_USER=tomsmith QA_PASSWORD='SuperSecretPassword!'",
+    "",
+    "  # 1. log in, bank the session",
+    "  node scripts/record-loop.mjs --url https://the-internet.herokuapp.com/login \\",
+    "    --out out/a1.webm --shots --flow flows/_selftest-auth.json \\",
+    "    --save-state ./auth.json --auth-check 'Logout'",
+    "",
+    "  # 2. THE QUESTION THIS ANSWERS: does a loaded session survive `record start`,",
+    "  #    which spawns a fresh context and reloads? No flow -- if --auth-check",
+    "  #    passes, the cookies made it into the recording context.",
+    "  node scripts/record-loop.mjs --url https://the-internet.herokuapp.com/secure \\",
+    "    --out out/a2.webm --shots --state ./auth.json --auth-check 'Logout' --wait 5"
+  ],
+  "requires": ["QA_USER", "QA_PASSWORD"],
+  "steps": [
+    { "do": "fill", "match": "Username", "value": "${QA_USER}", "chapter": "username entered" },
+    { "do": "fill", "match": "Password", "value": "${QA_PASSWORD}", "chapter": "password entered" },
+    { "do": "click", "match": "Login", "chapter": "submitted" },
+    { "do": "waitFor", "match": "(Secure Area|Logout)", "timeoutS": 45, "chapter": "logged in" }
+  ]
+}

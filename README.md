@@ -48,9 +48,12 @@ node scripts/record-loop.mjs --url http://localhost:3000 --out ./qa-run.webm --s
 node scripts/record-loop.mjs --url http://localhost:3000 --out ./qa-run.webm --shots \
   --passes desktop,iphone-12 --flow flows/my-flow.json --checklist checklists/my-checklist.json
 
-# Behind a login (credentials never enter a file — see SKILL.md)
-node scripts/record-loop.mjs --url http://localhost:3000/app --out ./qa-run.webm \
-  --state ./auth.json --auth-check "Sign out" --flow flows/my-flow.json
+# Behind a login — log in via the flow; credentials come from the environment.
+# --auth-check is mandatory: it proved its worth by catching a broken session
+# restore instead of recording a login page and calling it a verdict.
+export QA_USER=me@example.com QA_PASSWORD='...'
+node scripts/record-loop.mjs --url http://localhost:3000/login --out ./qa-run.webm \
+  --flow flows/login-then-thing.json --auth-check "Sign out"
 
 # Drive by hand instead
 node scripts/record-loop.mjs --url http://localhost:3000 --out ./qa-run.webm --manual
@@ -93,6 +96,11 @@ and a model watching pixels is blind to that entire class of failure.
   there are marked `manual` with a `judgeBy` pointer naming the channel.
 - **Device emulation is not a device.** `--passes` gives a real mobile UA, touch and DPR — enough
   for layout collapse and tap targets. Not a real phone: no real network, no Safari, no OS chrome.
+- **`--state` session restore is not verified working.** Saving captures the session; restoring it
+  did not authenticate in either documented form. Log in via the flow and pass `--auth-check`.
+  See SKILL.md.
+- **Don't run it alongside other browser work.** agent-browser shares one browser process tree, so
+  this loop's cleanup closes every session, not just its own. It warns at startup.
 
 ## Repo layout
 

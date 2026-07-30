@@ -1,0 +1,17 @@
+{
+  "name": "selftest — a step that cannot resolve (deliberately fails)",
+  "note": [
+    "Exists to make a pass DIE, so multi-pass failure containment is exercised",
+    "rather than asserted. record-loop claims 'a pass that fails does not cost you",
+    "the passes after it' — that claim was written and never tested until S#261.",
+    "",
+    "  node scripts/record-loop.mjs --url https://example.com --out out/f.webm --shots \\",
+    "    --passes desktop,iphone-12 --flow flows/_selftest-failing-step.json",
+    "",
+    "EXPECT: pass 1 fails loudly, pass 2 still runs to completion, both write",
+    "evidence, the cross-pass step reports it cannot compare, exit code 2."
+  ],
+  "steps": [
+    { "do": "click", "match": "NoSuchElementExistsAnywhereOnThisPage", "chapter": "the step that cannot resolve" }
+  ]
+}

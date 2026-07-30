@@ -84,23 +84,36 @@ A check that is wrong by design on one pass is worse than no check: it teaches y
 
 The loop wires agent-browser's own auth; it does not implement any of its own.
 
-```bash
-# once, by hand — the password never touches a file you commit
-echo "$PASS" | agent-browser auth save myapp --url https://app/login --username me --password-stdin
-agent-browser auth login myapp && agent-browser state save ./auth.json
+**The verified path is to log in through a flow, every run:**
 
-# then, every run
-node scripts/record-loop.mjs --url https://app/dash --out out/r.webm \
-  --state ./auth.json --auth-check "Sign out" --flow flows/x.json
+```bash
+export QA_USER=me@example.com QA_PASSWORD='...'      # never in the flow file
+
+node scripts/record-loop.mjs --url https://app/login --out out/r.webm --shots \
+  --flow flows/login-then-thing.json --auth-check "Sign out"
 ```
 
-- `--state <file>` loads cookies/localStorage at context creation · `--save-state <file>` writes them
-  back after a successful run · `--auth <profile>` logs in through the vault first.
-- **`--auth-check <text>` is not optional paranoia.** `record start` spawns a fresh context and
-  reloads — the same behaviour that already wipes the injected error hook and form fills. Name
-  something only a logged-in user sees and the run stops with a plain message if the session did not
-  survive. Without it, a dropped session records a login page and produces a verdict table full of
-  confident FAILs about features that were never reachable.
+Proven end to end against a real login (S#261, `flows/_selftest-auth.json`): `${ENV}` resolves
+against a real form, the flow drives it, and **the password appears zero times** in the log,
+chapters, evidence or verdict.
+
+- **`--auth-check <text>` is not optional paranoia — it is the only part of this that is proven
+  load-bearing.** It asserts, after `record start`, that something only a logged-in user sees is on
+  screen. On its first real test it **caught a genuinely broken session restore and stopped the run**,
+  instead of recording a login page and emitting a verdict table full of confident FAILs about
+  features that were never reachable. Always pass it.
+- **Never put a credential in a flow file.** `"value": "${MY_PASSWORD}"` + `"requires": [...]`; an
+  unset variable fails at load, before the browser opens.
+
+> **⚠ `--state` RESTORE IS NOT VERIFIED WORKING (S#261).** `--save-state` genuinely captures the
+> session (the auth cookie lands in the file). **Restoring it did not produce an authenticated
+> session** in either documented form: the `--state` flag on a cold `open`, and `agent-browser state
+> load`, which only answers *"State path set"* — it assigns a path rather than applying anything.
+> The auth cookie is session-scoped (`expires=-1`), which is the likely culprit, but the cause was
+> not isolated and the mechanism is agent-browser's, not this loop's.
+> **So do not build a workflow on `--state`.** The flags remain, because they may work in
+> configurations that were not isolated — but log in via the flow, and let `--auth-check` tell you
+> the truth either way. This limitation was found by testing the path rather than trusting it.
 - **Never put a credential in a flow file.** Use `"value": "${MY_PASSWORD}"` and declare
   `"requires": ["MY_PASSWORD"]`; an unset variable fails at load, before the browser opens, and a
   resolved value never reaches a chapter label, the evidence JSON or the verdict table. A missing
