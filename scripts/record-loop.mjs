@@ -62,6 +62,7 @@ import { createCollector, formatEvidence, makeAgentBrowser } from "./lib/agent-b
 import { loadFlow, runFlow } from "./lib/flow.mjs";
 import { formatVerdict, formatVerdictMarkdown, loadChecklistFile, resolveChecklist } from "./lib/checklist.mjs";
 import { applyPass, comparePasses, formatPassComparison, parsePass, passOutPath, resolvePasses } from "./lib/passes.mjs";
+import { listBrowsers } from "./lib/processes.mjs";
 import { readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -170,11 +171,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Mutable handle so the signal handlers can clean up whichever pass is live. */
 const live = { recording: false, cleaned: false };
 
+/**
+ * Close our session — and know that this does NOT isolate us.
+ *
+ * MEASURED S#261, and the measurement killed the obvious fix. This called
+ * `close --all`, which closes every agent-browser session, so a bystander session
+ * died on every loop run. The apparent fix was to close only our own session.
+ * It does not work: with two named sessions alive (11 -> 13 processes), a close
+ * scoped to ONE of them took the machine to **0**. agent-browser's sessions share
+ * a single browser process tree, so any close tears down all of them.
+ *
+ * So this is kept scoped because it is the more conservative CALL (and becomes
+ * correct if agent-browser ever isolates sessions per process), but it buys no
+ * protection today. The protection that actually works is the startup warning
+ * below: tell the operator their other sessions will die, BEFORE we take them.
+ * A stated foot-gun is survivable; a silent one is what cost a real session.
+ */
 const cleanup = (stopRecording) => {
   if (live.cleaned) return;
   live.cleaned = true;
   try { if (live.recording && stopRecording) ab("record", "stop"); } catch { /* best-effort */ }
-  try { ab("close", "--all"); } catch { /* best-effort */ }
+  try { ab("close"); } catch { /* best-effort */ }
 };
 process.on("SIGINT", () => { cleanup(true); process.exit(2); });
 process.on("SIGTERM", () => { cleanup(true); process.exit(2); });
@@ -379,16 +396,74 @@ async function runPass(pass) {
   }
 }
 
+// ── OWNERSHIP BASELINE ──────────────────────────────────────────────────────
+// Snapshot which automation-driven browsers already exist BEFORE we open ours,
+// so the postflight can tell what THIS loop leaked from what was already there.
+// Without it, sweep-check flags a bystander's session as our leak and advises a
+// `close --all` that kills it (measured S#261: 10 processes from an unrelated
+// `sl-board` session, reported as ours, and the advice reaped them).
+//
+// Captured once for the whole run, not per pass: the question is "what predates
+// this loop", and pass 2's baseline would otherwise include pass 1's own browser.
+const baselinePath = `${resolve(out)}.baseline.json`;
+{
+  const before = listBrowsers();
+  mkdirSync(dirname(resolve(out)), { recursive: true });
+  writeFileSync(
+    baselinePath,
+    JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        // null (not []) when the listing itself failed — a failed read is not an
+        // empty machine, and sweep-check must not treat it as one.
+        browsersAtStart: before === null ? null : before.map((p) => p.pid),
+        note: before === null
+          ? "process listing FAILED — ownership cannot be attributed for this run"
+          : "pids of automation-driven browsers running before this loop opened anything",
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+  console.log(
+    before === null
+      ? "[record-loop] baseline: process listing failed — postflight ownership will be unknown"
+      : `[record-loop] baseline: ${before.length} browser(s) already running (not ours)`,
+  );
+
+  // THE WARNING THAT IS THE ACTUAL MITIGATION (S#261).
+  //
+  // agent-browser sessions share one browser process tree: a close scoped to a
+  // single session was measured taking 13 processes to 0. So this loop CANNOT
+  // clean up after itself without also closing whatever else is open — and it
+  // will do exactly that, at the end of the run, whether or not you knew.
+  //
+  // The fix is not technical, because the substrate does not offer one. It is to
+  // say so before it happens, while the operator can still act. This is the one
+  // thing that would have prevented the real incident: a SIGHTLINE board session
+  // died mid-session and nobody knew why until it was investigated afterwards.
+  if (before !== null && before.length > 0) {
+    console.log(
+      `[record-loop] ⚠ WARNING: ${before.length} browser process(es) are already running.\n` +
+      "[record-loop]   agent-browser shares ONE browser process tree across sessions, so this\n" +
+      "[record-loop]   loop's cleanup WILL close them too — measured, not theoretical.\n" +
+      "[record-loop]   If any of them matter, Ctrl-C now and finish that work first.",
+    );
+  }
+}
+
 const results = [];
 for (const [i, pass] of passes.entries()) {
   if (multiPass) console.log(`\n[record-loop] ══ pass ${i + 1}/${passes.length}: ${pass.name} (${pass.label}) ══`);
   results.push(await runPass(pass));
   if (results[results.length - 1].manual) break;
-  // Between passes: close everything and let the daemon settle. Device emulation
+  // Between passes: close OUR session and let the daemon settle. Device emulation
   // is context state — reusing a context would carry the phone's UA and touch
   // flags into the desktop pass and make both passes measure the same thing.
+  // Scoped, not `--all`: resetting our own context must not reap anyone else's.
   if (i < passes.length - 1) {
-    try { ab("close", "--all"); } catch { /* best-effort */ }
+    try { ab("close"); } catch { /* best-effort */ }
     await sleep(1500);
   }
 }
@@ -423,4 +498,8 @@ if (results.some((r) => r.verdict)) {
 } else {
   console.log("[record-loop] next: watch it (SKILL.md phase 2) — video_info -> sampled watch -> detail frames.");
 }
+// Hand over the sweep command WITH its baseline. Without the baseline the sweep
+// cannot attribute what it finds, and the version of this advice that omitted it
+// is what got a bystander's session killed.
+console.log(`[record-loop] postflight: node scripts/sweep-check.mjs --baseline ${baselinePath}`);
 process.exit(worst);

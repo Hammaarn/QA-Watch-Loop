@@ -201,6 +201,18 @@ leaves headless browsers (or worse, full-disk scans) running with no consumer. S
 landed.** If your agent runtime spawns other helpers (search tools, servers), sweep those too —
 scoped to what THIS loop started; report-first, kill deliberately.
 
+**Pass `--baseline <out>.baseline.json`** (record-loop writes it, and prints the exact command).
+Without it the sweep cannot attribute what it finds, and will say so rather than guess — it used
+to announce every automation-driven browser as the loop's own leak and advise `close --all`.
+
+> **⚠ DO NOT RUN THIS LOOP ALONGSIDE OTHER BROWSER WORK.**
+> **Measured S#261:** agent-browser sessions share ONE browser process tree. With two named
+> sessions alive (13 processes), a close scoped to a *single* session took the machine to **0**.
+> So the loop cannot clean up after itself without closing every other session too, and there is
+> no flag that changes this — `close` and `close --all` behave the same way here.
+> The loop now warns at startup when browsers are already running. Heed it: a real SIGHTLINE
+> board session was killed this way, and the cause was only found afterwards.
+
 ## Known limits (state them in every report)
 
 - **Device emulation is not a device.** `--passes` gives you a real mobile UA, touch flags and DPR,

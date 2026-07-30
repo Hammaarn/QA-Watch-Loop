@@ -1,0 +1,16 @@
+{
+  "name": "qa-watch-loop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Record the running app, watch the tape, produce a timestamped QA verdict. Gates function; a human gates taste.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node scripts/check-passes.mjs --selftest && node scripts/check-flow.mjs --selftest && node scripts/check-checklist.mjs --selftest && node scripts/compare-runs.mjs --selftest && node scripts/sweep-check.mjs --selftest",
+    "sweep": "node scripts/sweep-check.mjs",
+    "passes": "node scripts/check-passes.mjs --list"
+  }
+}
